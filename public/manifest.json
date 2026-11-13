@@ -1,0 +1,3 @@
+{ "name": "Bàn Bài", "short_name": "Bàn Bài", "start_url": "/", "display": "standalone",
+  "background_color": "#1c0907", "theme_color": "#1c0907",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
