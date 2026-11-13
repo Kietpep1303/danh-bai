@@ -333,7 +333,7 @@
     // còn đúng một lá đã lộ mặt thì tự gom vào tay
     clearTimeout(autoTimer);
     if (hidden.length === 1 && open) autoTimer = setTimeout(() => peel('card', hidden[0].id), 700);
-    return { hidden: hidden.length, html: `<div class="hand sq ${hidden.length ? '' : 'all'}">${fan}${pile}</div>` };
+    return { hidden: hidden.length, html: `<div class="hand sq ${hidden.length ? '' : 'all'}" style="--n:${Math.max(1, shown.length)}">${fan}${pile}</div>` };
   }
   function peel(kind, cid) {
     const r = S && S.round; if (!r) return;

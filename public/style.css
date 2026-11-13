@@ -160,9 +160,8 @@ button { cursor: pointer; touch-action: manipulation; }
 .me-head b { font-size: 16px; }
 .hand { display: flex; gap: 6px; justify-content: center; min-height: 82px; align-items: flex-end; }
 .hand .card { --w: 60px; }
-.hand.tl { --tw: min(52px, calc((100vw - 28px) / 7.6)); gap: 0; padding-top: 14px; }
+.hand.tl { gap: 0; padding-top: 16px; }
 .hand.tl .card { --w: var(--tw); transition: transform .12s ease; cursor: pointer; }
-.hand.tl .card + .card { margin-left: calc(var(--tw) * -.45); }
 .hand.tl .card.sel { transform: translateY(-14px); box-shadow: 0 0 0 2px var(--gold), 0 6px 14px rgba(0,0,0,.4); }
 .actions { display: flex; gap: 8px; }
 .actions .btn { flex: 1; }
@@ -215,19 +214,13 @@ button { cursor: pointer; touch-action: manipulation; }
   .bar { padding-top: 6px; padding-bottom: 6px; }
   .felt { grid-column: 1; grid-row: 3; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); }
   .me { grid-column: 2; grid-row: 3; border-top: 0; border-left: 1px solid var(--line); overflow-y: auto; justify-content: flex-end; }
-  .hand.tl { --tw: min(44px, calc((44vw - 28px) / 7.6)); }
   .hand .card { --w: 52px; }
-  .hand.sq { --pw: 74px; }
   .center { min-height: 90px; }
 }
 
 @media (min-width: 720px) {
   .felt { padding: 20px; }
   .hand .card { --w: 76px; }
-  .hand.sq { --pw: 112px; }
-  .fan .card { --w: 76px; }
-  .hand.sq.all .fan .card { --w: 90px; }
-  .hand.tl { --tw: min(70px, calc((min(100vw, 900px) - 48px) / 7.6)); }
   .mini .card { --w: 30px; }
   .felt { justify-content: center; }
   .center .card { --w: 58px; }
@@ -242,11 +235,9 @@ button { cursor: pointer; touch-action: manipulation; }
 .dealing { animation: deal .45s cubic-bezier(.2, .75, .25, 1) backwards; }
 
 /* Nặn bài */
-.hand.sq { --pw: 96px; gap: 18px; align-items: center; min-height: calc(var(--pw) * 1.42 + 8px); }
+.hand.sq { gap: 16px; align-items: center; min-height: calc(var(--pw) * 1.42 + 8px); }
 .fan { display: flex; align-items: center; }
 .fan:empty { display: none; }
-.fan .card { --w: 58px; }
-.fan .card + .card { margin-left: -14px; }
 .pile { position: relative; width: var(--pw); height: calc(var(--pw) * 1.42); flex: none; }
 .pc { position: absolute; inset: 0; transform: translate(calc(var(--o) * 3px), calc(var(--o) * -3px)); }
 .pc .card { --w: var(--pw); }
@@ -258,9 +249,33 @@ button { cursor: pointer; touch-action: manipulation; }
 .pc.hint { animation: nudge 2.4s ease-in-out 1.6s infinite; }
 @keyframes pop { from { transform: translateX(40px) scale(1.15); } to { transform: none; } }
 .card.pop { animation: pop .3s ease-out; }
-.hand.sq.all .fan .card { --w: 70px; }
-.hand.sq.all .fan .card + .card { margin-left: -10px; }
 .me-head > span:last-child { white-space: nowrap; display: flex; align-items: center; gap: 6px; }
 .nan-hint { color: var(--gold); font-weight: 700; font-size: 14px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ===== Kích thước bài trên tay (để cuối file cho chắc thắng các quy tắc trên) ===== */
+.me { --room: min(100vw, 900px); }
+/* tiến lên: 13 lá, mỗi lá lộ ra 41% bề ngang */
+.hand.tl { --tw: min(68px, calc((var(--room) - 28px) / 6.1)); }
+.hand.tl .card + .card { margin-left: calc(var(--tw) * -.59); }
+.hand.tl .card.sel { transform: translateY(-18px); }
+/* xì dách, bài cào: chồng bài để nặn + các lá đã lật */
+.hand.sq {
+  --pw: min(136px, 36vw);
+  --fw: min(92px, calc((var(--room) - 60px - var(--pw)) / (var(--n, 1) * .8 + .2)));
+}
+.hand.sq.all { --fw: min(112px, calc((var(--room) - 32px) / (var(--n, 1) * .8 + .2))); }
+.fan .card { --w: var(--fw); }
+.fan .card + .card { margin-left: calc(var(--fw) * -.2); }
+
+@media (min-width: 720px) {
+  .hand.sq { --pw: 156px; }
+  .hand.tl { --tw: min(86px, calc((var(--room) - 48px) / 6.1)); }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  .me { --room: 44vw; }
+  .hand.sq { --pw: min(104px, 30vh); }
+  .hand.sq.all { --fw: min(80px, calc((var(--room) - 32px) / (var(--n, 1) * .8 + .2))); }
+  .hand.tl { --tw: min(58px, calc((var(--room) - 24px) / 6.1)); }
+}
