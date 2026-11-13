@@ -40,7 +40,7 @@ function viewFor(room, pid) {
     game: room.game, bet: room.bet, dealerMode: room.dealerMode, dealerId: room.dealerId,
     dealerRounds: room.dealerRounds, myVote: room.votes[pid] || null, tally,
     players: room.players.map(p => ({ id: p.id, name: p.name, points: p.points, connected: p.connected })),
-    round: r ? GAMES[r.game].view(room, pid) : null,
+    round: r ? { ...GAMES[r.game].view(room, pid), id: r.id } : null,
     deadline: actor ? room.turnAt + (isOnline(room, actor) ? TURN_MS : OFFLINE_TURN_MS) : null,
     log: room.log.slice(-12), now: Date.now(),
   };
@@ -83,6 +83,8 @@ function startRound(room) {
   if (order.length < G.min) return `Cần ít nhất ${G.min} người đang online`;
   if (G.usesDealer) chooseDealer(room, order);
   room.round = G.start(room, order, room.dealerId);
+  room.roundNo = (room.roundNo || 0) + 1;
+  room.round.id = room.code + '-' + room.roundNo;
   return null;
 }
 

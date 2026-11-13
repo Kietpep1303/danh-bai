@@ -11,6 +11,13 @@
   let S = null;           // trạng thái phòng từ server
   let sel = new Set();    // lá đang chọn (tiến lên)
   let sheetOpen = false;
+  // Nặn bài: lá nào đã vuốt ra, chồng bài đã mở lớp úp chưa
+  let revealed = new Set(), pileOpen = null, justRevealed = null;
+  try { const v = JSON.parse(sessionStorage.getItem('banbai-nan') || '{}'); revealed = new Set(v.rv || []); pileOpen = v.open || null; } catch {}
+  const saveNan = () => { try { sessionStorage.setItem('banbai-nan', JSON.stringify({ rv: [...revealed].slice(-40), open: pileOpen })); } catch {} };
+  // Hiệu ứng chia bài
+  const seen = new Set(); let firstPaint = true;
+  let dragging = false, pendingRender = false, autoTimer = null;
   let offset = 0;         // lệch đồng hồ với server
 
   const store = {
@@ -28,9 +35,11 @@
   function emit(ev, data) {
     return new Promise(res => socket.emit(ev, data, r => { if (r && r.error) toast(r.error); res(r || {}); }));
   }
-  const card = (c, cls = '') => c
-    ? `<div class="card ${c.s >= 2 ? 'red' : ''} ${cls}" data-id="${c.id}"><span class="cr">${RANKS[c.r] || c.r}<i>${SUITS[c.s]}</i></span><span class="cs">${SUITS[c.s]}</span></div>`
-    : `<div class="card back ${cls}"></div>`;
+  const card = (c, cls = '', attr = '') => c
+    ? `<div class="card ${c.s >= 2 ? 'red' : ''} ${cls}" data-id="${c.id}" ${attr}><span class="cr">${RANKS[c.r] || c.r}<i>${SUITS[c.s]}</i></span><span class="cs">${SUITS[c.s]}</span></div>`
+    : `<div class="card back ${cls}" ${attr}></div>`;
+  // khóa để biết lá nào mới được chia: ván : ghế : thứ tự lá
+  const dk = (r, j, id, i) => `data-k="${r.id}:${id}:${i}" data-i="${i}" data-j="${j}"`;
   const backs = n => Array.from({ length: n }, () => card(null)).join('');
   const money = m => m > 0 ? `<span class="win">+${m}</span>` : m < 0 ? `<span class="lose">${m}</span>` : `<span>Hòa</span>`;
 
@@ -173,8 +182,11 @@
     const p = S.players.find(x => x.id === seat.id) || { name: '?', points: 0, connected: false };
     const isTurn = r.turn === seat.id && r.phase !== 'done';
     const dealer = r.dealer === seat.id;
-    let cards = seat.cards ? seat.cards.map(c => card(c)).join('') : backs(Math.min(seat.count, r.game === 'tienlen' ? 1 : 5));
-    if (r.game === 'tienlen') cards = (seat.cards && r.phase === 'done' ? cards : backs(seat.count ? 1 : 0)) + `<span class="count">${seat.count} lá</span>`;
+    const j = r.seats.indexOf(seat);
+    const nBack = Math.min(seat.count, r.game === 'tienlen' ? 1 : 5);
+    let cards = seat.cards ? seat.cards.map((c, i) => card(c, '', dk(r, j, seat.id, i))).join('')
+      : Array.from({ length: nBack }, (_, i) => card(null, '', dk(r, j, seat.id, i))).join('');
+    if (r.game === 'tienlen') cards = (seat.cards && r.phase === 'done' ? cards : (seat.count ? card(null, '', dk(r, j, seat.id, 0)) : '')) + `<span class="count">${seat.count} lá</span>`;
     let info = '';
     if (seat.result != null && seat.id !== r.dealer) info = money(seat.result * S.bet);
     else if (seat.info) info = esc(seat.info);
@@ -243,28 +255,31 @@
     if (r && mine) {
       const myTurn = r.turn === S.me && r.phase !== 'done';
       const resTxt = mine.result != null && S.me !== r.dealer ? ' ' + money(mine.result * S.bet) : '';
-      let infoTxt = mine.info ? esc(mine.info) : '';
+      const myJ = r.seats.indexOf(mine);
+      const nan = r.game !== 'tienlen' ? squeeze(r, mine, myJ) : null;
+      const locked = nan && nan.hidden > 0;
+      let infoTxt = locked ? 'Vuốt lá bài để nặn' : mine.info ? esc(mine.info) : '';
       if (r.game === 'tienlen') infoTxt = mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`;
-      head = `<div class="me-head"><span><b>${infoTxt}</b>${resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}</span>
-        <span>${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.points} điểm</span></div>`;
+      head = `<div class="me-head"><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}</span>
+        <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.points} điểm</span></div>`;
       if (r.game === 'tienlen') {
-        hand = `<div class="hand tl">${(mine.cards || []).map(c => card(c, sel.has(c.id) ? 'sel' : '')).join('')}</div>`;
+        hand = `<div class="hand tl">${(mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
         if (r.phase !== 'done') actions = `
           <button class="btn ghost" data-act="pass" ${myTurn && r.table ? '' : 'disabled'}>Bỏ lượt</button>
           <button class="btn ghost" data-clear ${sel.size ? '' : 'disabled'}>Bỏ chọn</button>
           <button class="btn" data-act="play" ${myTurn && sel.size ? '' : 'disabled'}>Đánh</button>`;
       } else {
-        hand = `<div class="hand">${(mine.cards || []).map(c => card(c)).join('')}</div>`;
+        hand = nan.html;
         if (r.game === 'xidach' && r.phase !== 'done') {
           if (r.phase === 'players' && S.me !== r.dealer) actions = `
-            <button class="btn ghost" data-act="stand" ${myTurn && !(parseInt(mine.info) < 16 && mine.count < 5) ? '' : 'disabled'}>Dằn</button>
-            <button class="btn" data-act="hit" ${myTurn ? '' : 'disabled'}>Rút bài</button>`;
+            <button class="btn ghost" data-act="stand" ${myTurn && !locked && !(parseInt(mine.info) < 16 && mine.count < 5) ? '' : 'disabled'}>Dằn</button>
+            <button class="btn" data-act="hit" ${myTurn && !locked ? '' : 'disabled'}>Rút bài</button>`;
           else if (S.me === r.dealer) actions = `
-            <button class="btn ghost" data-act="checkAll" ${myTurn ? '' : 'disabled'}>Xét hết</button>
-            <button class="btn" data-act="hit" ${myTurn ? '' : 'disabled'}>Rút bài</button>`;
+            <button class="btn ghost" data-act="checkAll" ${myTurn && !locked ? '' : 'disabled'}>Xét hết</button>
+            <button class="btn" data-act="hit" ${myTurn && !locked ? '' : 'disabled'}>Rút bài</button>`;
         }
         if (r.game === 'baicao' && r.phase !== 'done') {
-          actions = `<button class="btn ghost" data-act="flip" ${mine.flipped ? 'disabled' : ''}>${mine.flipped ? 'Đã lật' : 'Lật bài'}</button>`;
+          actions = `<button class="btn ghost" data-act="flip" ${mine.flipped || locked ? 'disabled' : ''}>${mine.flipped ? 'Đã lật' : 'Lật bài'}</button>`;
           if (S.me === r.dealer) actions += `<button class="btn" data-act="reveal">Lật hết, tính tiền</button>`;
         }
       }
@@ -294,7 +309,98 @@
     bind();
   }
 
+  // ---------- Nặn bài ----------
+  // Bài mới chia nằm thành một chồng úp. Vuốt lớp úp ra để thấy lá trên cùng,
+  // vuốt tiếp lá trên cùng sang bên để lộ lá bên dưới.
+  function squeeze(r, mine, j) {
+    const cards = mine.cards || [];
+    const key = c => r.id + ':' + c.id;
+    if (r.phase === 'done') cards.forEach(c => revealed.add(key(c)));
+    const shown = cards.filter(c => revealed.has(key(c)));
+    const hidden = cards.filter(c => !revealed.has(key(c)));
+    const open = pileOpen === r.id + ':' + cards.length;
+    const fan = `<div class="fan">${shown.map(c => card(c, c.id === justRevealed ? 'pop' : '')).join('')}</div>`;
+    let pile = '';
+    if (hidden.length) {
+      const stack = [...hidden].reverse(); // phần tử cuối nằm trên cùng
+      pile = `<div class="pile" ${dk(r, j, S.me, 'p' + cards.length).replace(/data-i="[^"]*"/, `data-i="${shown.length}"`)}>` +
+        stack.map((c, i) => {
+          const top = i === stack.length - 1;
+          return `<div class="pc" style="--o:${stack.length - 1 - i}" ${top && open ? `data-drag="card" data-cid="${c.id}"` : ''}>${card(c)}</div>`;
+        }).join('') +
+        (open ? '' : `<div class="pc cover hint" style="--o:0" data-drag="cover">${card(null)}</div>`) + `</div>`;
+    }
+    // còn đúng một lá đã lộ mặt thì tự gom vào tay
+    clearTimeout(autoTimer);
+    if (hidden.length === 1 && open) autoTimer = setTimeout(() => peel('card', hidden[0].id), 700);
+    return { hidden: hidden.length, html: `<div class="hand sq ${hidden.length ? '' : 'all'}">${fan}${pile}</div>` };
+  }
+  function peel(kind, cid) {
+    const r = S && S.round; if (!r) return;
+    const mine = r.seats.find(x => x.id === S.me); if (!mine) return;
+    if (kind === 'cover') pileOpen = r.id + ':' + mine.cards.length;
+    else { revealed.add(r.id + ':' + cid); justRevealed = +cid; }
+    if (navigator.vibrate) try { navigator.vibrate(12); } catch {}
+    saveNan(); render();
+  }
+  function quickReveal() {
+    const r = S.round, mine = r.seats.find(x => x.id === S.me);
+    mine.cards.forEach(c => revealed.add(r.id + ':' + c.id)); justRevealed = null;
+    saveNan(); render();
+  }
+  function bindDrag() {
+    app.querySelectorAll('[data-drag]').forEach(el => {
+      el.addEventListener('pointerdown', e => {
+        if (e.button > 0) return;
+        e.preventDefault();
+        try { el.setPointerCapture(e.pointerId); } catch {}
+        dragging = true; el.classList.remove('hint'); el.classList.add('grab');
+        const sx = e.clientX, sy = e.clientY, w = el.offsetWidth, h = el.offsetHeight;
+        const move = ev => {
+          const dx = ev.clientX - sx, dy = ev.clientY - sy;
+          el.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx / 14}deg)`;
+        };
+        const up = ev => {
+          el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
+          el.classList.remove('grab');
+          const dx = ev.clientX - sx, dy = ev.clientY - sy;
+          if (Math.abs(dx) > w * 0.45 || Math.abs(dy) > h * 0.4) {
+            el.style.transition = 'transform .22s ease-out, opacity .22s ease-out';
+            el.style.transform = `translate(${dx * 2.2}px, ${dy * 2.2}px) rotate(${dx / 6}deg)`;
+            el.style.opacity = '0';
+            setTimeout(() => { dragging = false; pendingRender = false; peel(el.dataset.drag, el.dataset.cid); }, 200);
+          } else {
+            el.style.transition = 'transform .18s ease-out'; el.style.transform = '';
+            setTimeout(() => { dragging = false; if (pendingRender) { pendingRender = false; render(); } }, 190);
+          }
+        };
+        el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+      });
+    });
+  }
+  // ---------- Hiệu ứng chia bài: lá mới bay từ giữa bàn về chỗ ----------
+  function animateDeal() {
+    const els = [...app.querySelectorAll('[data-k]')].filter(el => !seen.has(el.dataset.k));
+    els.forEach(el => seen.add(el.dataset.k));
+    if (firstPaint) { firstPaint = false; return; }
+    if (!els.length || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const src = app.querySelector('.center') || app.querySelector('.status') || app.querySelector('.felt');
+    const fr = src.getBoundingClientRect();
+    const ox = fr.left + fr.width / 2, oy = fr.top + fr.height / 2;
+    els.sort((a, b) => (parseInt(a.dataset.i) || 0) - (parseInt(b.dataset.i) || 0) || (+a.dataset.j - +b.dataset.j));
+    const step = Math.min(85, 1500 / els.length);
+    els.forEach((el, n) => {
+      const b = el.getBoundingClientRect();
+      el.style.setProperty('--dx', (ox - b.left - b.width / 2) + 'px');
+      el.style.setProperty('--dy', (oy - b.top - b.height / 2) + 'px');
+      el.style.animationDelay = Math.round(n * step) + 'ms';
+      el.classList.add('dealing');
+    });
+  }
+
   function bind() {
+    bindDrag();
+    const q = app.querySelector('[data-quick]'); if (q) q.onclick = quickReveal;
     bindPanel(app);
     app.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
       const type = b.dataset.act;
@@ -319,12 +425,15 @@
 
   function render() {
     if (!S) { if (!app.querySelector('.home')) renderHome(); return; }
+    if (dragging) { pendingRender = true; return; } // đang nặn thì đợi vuốt xong mới vẽ lại
     // giữ vị trí cuộn khi vẽ lại
     const felt = app.querySelector('.felt'), sheet = app.querySelector('.sheet');
     const y = felt ? felt.scrollTop : 0, sy = sheet ? sheet.scrollTop : 0;
     renderRoom();
     const f2 = app.querySelector('.felt'), s2 = app.querySelector('.sheet');
     if (f2) f2.scrollTop = y; if (s2) s2.scrollTop = sy;
+    animateDeal();
+    justRevealed = null;
   }
   render();
 })();

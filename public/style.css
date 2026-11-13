@@ -217,16 +217,50 @@ button { cursor: pointer; touch-action: manipulation; }
   .me { grid-column: 2; grid-row: 3; border-top: 0; border-left: 1px solid var(--line); overflow-y: auto; justify-content: flex-end; }
   .hand.tl { --tw: min(44px, calc((44vw - 28px) / 7.6)); }
   .hand .card { --w: 52px; }
+  .hand.sq { --pw: 74px; }
   .center { min-height: 90px; }
 }
 
 @media (min-width: 720px) {
   .felt { padding: 20px; }
   .hand .card { --w: 76px; }
+  .hand.sq { --pw: 112px; }
+  .fan .card { --w: 76px; }
+  .hand.sq.all .fan .card { --w: 90px; }
   .hand.tl { --tw: min(70px, calc((min(100vw, 900px) - 48px) / 7.6)); }
   .mini .card { --w: 30px; }
   .felt { justify-content: center; }
   .center .card { --w: 58px; }
   .room-inner { max-width: 900px; margin: 0 auto; width: 100%; }
 }
+/* Chia bài */
+@keyframes deal {
+  from { transform: translate(var(--dx, 0), var(--dy, 0)) rotate(-30deg) scale(.55); opacity: 0; }
+  12% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+.dealing { animation: deal .45s cubic-bezier(.2, .75, .25, 1) backwards; }
+
+/* Nặn bài */
+.hand.sq { --pw: 96px; gap: 18px; align-items: center; min-height: calc(var(--pw) * 1.42 + 8px); }
+.fan { display: flex; align-items: center; }
+.fan:empty { display: none; }
+.fan .card { --w: 58px; }
+.fan .card + .card { margin-left: -14px; }
+.pile { position: relative; width: var(--pw); height: calc(var(--pw) * 1.42); flex: none; }
+.pc { position: absolute; inset: 0; transform: translate(calc(var(--o) * 3px), calc(var(--o) * -3px)); }
+.pc .card { --w: var(--pw); }
+.pc[data-drag] { touch-action: none; cursor: grab; z-index: 2; }
+.pc.grab { cursor: grabbing; transition: none; }
+.pc.grab .card { box-shadow: 0 14px 30px rgba(0,0,0,.5); }
+.pc.cover .card.back { box-shadow: 0 0 0 2px var(--gold-soft), 0 6px 16px rgba(0,0,0,.4); }
+@keyframes nudge { 0%, 70%, 100% { transform: none; } 80% { transform: translateX(10px) rotate(4deg); } 90% { transform: translateX(-3px) rotate(-1deg); } }
+.pc.hint { animation: nudge 2.4s ease-in-out 1.6s infinite; }
+@keyframes pop { from { transform: translateX(40px) scale(1.15); } to { transform: none; } }
+.card.pop { animation: pop .3s ease-out; }
+.hand.sq.all .fan .card { --w: 70px; }
+.hand.sq.all .fan .card + .card { margin-left: -10px; }
+.me-head > span:last-child { white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.nan-hint { color: var(--gold); font-weight: 700; font-size: 14px; }
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
