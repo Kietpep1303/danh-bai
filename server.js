@@ -37,7 +37,7 @@ function viewFor(room, pid) {
   const actor = r ? GAMES[r.game].actor(room) : null;
   return {
     code: room.code, me: pid, hostId: room.hostId,
-    game: room.game, bet: room.bet, dealerMode: room.dealerMode, dealerId: room.dealerId,
+    game: room.game, bet: room.bet, dealerMode: room.dealerMode, dealerId: room.dealerId, dealFx: room.dealFx,
     dealerRounds: room.dealerRounds, myVote: room.votes[pid] || null, tally,
     players: room.players.map(p => ({ id: p.id, name: p.name, points: p.points, connected: p.connected })),
     round: r ? { ...GAMES[r.game].view(room, pid), id: r.id } : null,
@@ -107,7 +107,7 @@ io.on('connection', socket => {
   socket.on('create', (d = {}, cb) => {
     const game = GAMES[d.game] ? d.game : 'xidach';
     const room = {
-      code: newCode(), hostId: null, game, bet: 10, dealerMode: 'vote', dealerId: null, dealerRounds: 0,
+      code: newCode(), hostId: null, game, bet: 10, dealerMode: 'vote', dealerId: null, dealerRounds: 0, dealFx: 'random',
       votes: {}, players: [], round: null, log: [], touched: Date.now(), tlWinner: null,
     };
     const p = { id: rid(), token: rid() + rid(), name: cleanName(d.name), points: 0, connected: true };
@@ -138,6 +138,7 @@ io.on('connection', socket => {
     if (room.round && room.round.phase !== 'done') return reply(cb, { error: 'Đợi hết ván rồi đổi' });
     if (d.game && GAMES[d.game] && d.game !== room.game) { room.game = d.game; room.round = null; log(room, `Đổi sang ${GAMES[d.game].title}`); }
     if (d.bet) room.bet = Math.max(1, Math.min(100000, Math.floor(Number(d.bet)) || 10));
+    if (['random', 'fly', 'spin', 'flip', 'arc', 'snap'].includes(d.dealFx)) room.dealFx = d.dealFx;
     if (d.dealerMode === 'vote' || d.dealerMode === 'random3') {
       if (d.dealerMode !== room.dealerMode) { room.dealerMode = d.dealerMode; room.dealerRounds = 3; }
     }

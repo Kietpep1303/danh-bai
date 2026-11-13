@@ -34,6 +34,7 @@ Mở http://localhost:3000
 - **Bài cào (2–17 người):** 3 lá, tính số nút hàng đơn vị. Ba tây lớn nhất, ăn 2 lần cược. Bằng nút thì hòa.
 - **Tiến lên miền Nam (2–4 người):** ván đầu ai giữ lá nhỏ nhất (thường là 3 bích) đi trước và phải đánh lá đó. Ván sau người về nhất đi trước. 3 đôi thông chặt heo; tứ quý chặt heo, đôi heo, 3 đôi thông; 4 đôi thông chặt tất cả. Chặt heo đen ăn 1 lần cược, heo đỏ 2 lần. Tới trắng: sảnh rồng, tứ quý heo, 6 đôi, 5 đôi thông. Cuối ván: 4 người được +3, +1, −1, −3 lần cược (3 người: +2, 0, −2).
 - **Nhà cái:** chủ phòng chọn "Bầu chọn" (giữ cái đến khi người khác được nhiều phiếu hơn) hoặc "Ngẫu nhiên 3 ván".
+- **Hiệu ứng:** chủ phòng chọn kiểu phát bài (Bay thẳng, Xoay tít, Lật bay, Vòng cung, Búng nhanh hoặc Ngẫu nhiên mỗi ván). Mỗi người tự bật/tắt tiếng lá bài trong bảng Phòng.
 - **Hết giờ:** mỗi lượt 60 giây (người rớt mạng 15 giây), quá giờ máy tự đi giùm.
 
 Luật nằm trong thư mục `games/`, muốn đổi cách tính tiền thì sửa ở đó.

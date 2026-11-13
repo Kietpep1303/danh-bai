@@ -234,6 +234,68 @@ button { cursor: pointer; touch-action: manipulation; }
 }
 .dealing { animation: deal .45s cubic-bezier(.2, .75, .25, 1) backwards; }
 
+/* Các kiểu phát bài */
+.dealing.fx-fly { animation-name: deal; }
+@keyframes dealSpin {
+  from { transform: translate(var(--dx), var(--dy)) rotate(-540deg) scale(.4); opacity: 0; }
+  10% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+.dealing.fx-spin { animation: dealSpin .6s cubic-bezier(.15, .7, .3, 1) backwards; }
+@keyframes dealFlip {
+  0% { transform: translate(var(--dx), var(--dy)) scale(.6) rotateY(180deg); opacity: 0; }
+  10% { opacity: 1; }
+  55% { transform: translate(0, -10px) scale(1.06) rotateY(180deg); }
+  100% { transform: none; opacity: 1; }
+}
+.dealing.fx-flip { animation: dealFlip .7s cubic-bezier(.3, .6, .3, 1) backwards; }
+/* mặt sau che lá bài cho tới khi lật xong nửa vòng */
+.dealing.fx-flip[data-id]::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; border: 2px solid var(--ivory);
+  background:
+    repeating-linear-gradient(45deg, transparent 0 4px, rgba(224,176,74,.28) 4px 5px),
+    repeating-linear-gradient(-45deg, transparent 0 4px, rgba(224,176,74,.28) 4px 5px), #8a1c15;
+  animation: hideBack .7s step-end backwards; animation-delay: inherit; opacity: 0;
+}
+@keyframes hideBack { 0% { opacity: 1; } 78% { opacity: 0; } }
+@keyframes dealArc {
+  0% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(.55); opacity: 0; }
+  8% { opacity: 1; }
+  50% { transform: translate(var(--mx), var(--my)) rotate(calc(var(--rot) * -2)) scale(1.15); }
+  100% { transform: none; opacity: 1; }
+}
+.dealing.fx-arc { animation: dealArc .62s cubic-bezier(.35, .1, .3, 1) backwards; }
+@keyframes dealSnap {
+  0% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(.7); opacity: 0; }
+  8% { opacity: 1; }
+  70% { transform: translate(calc(var(--dx) * -.06), calc(var(--dy) * -.06)) rotate(calc(var(--rot) * -.3)); }
+  85% { transform: translate(calc(var(--dx) * .02), calc(var(--dy) * .02)); }
+  100% { transform: none; opacity: 1; }
+}
+.dealing.fx-snap { animation: dealSnap .32s cubic-bezier(.2, .9, .3, 1.2) backwards; }
+
+/* Bộ bài giữa bàn và màn xào bài */
+.deck-fx, .shuffle-fx { position: fixed; z-index: 30; pointer-events: none; width: 0; height: 0; }
+.deck-fx .card, .shuffle-fx .card { --w: 46px; position: absolute; left: calc(var(--w) / -2); top: calc(var(--w) * -.71); }
+.deck-fx .card:nth-child(2) { transform: translate(2px, -2px); }
+.deck-fx .card:nth-child(3) { transform: translate(4px, -4px); }
+@keyframes deckIn { from { opacity: 0; transform: scale(.6); } }
+@keyframes deckOut { to { opacity: 0; transform: scale(.7); } }
+.shuffle-fx .sh { animation: riffle .38s ease-in-out calc(var(--i) * 18ms) 2 alternate; transform: translateY(calc(var(--i) * -2px)); }
+.shuffle-fx .sh.l { --sx: -38px; --sr: -14deg; }
+.shuffle-fx .sh.r { --sx: 38px; --sr: 14deg; }
+@keyframes riffle {
+  0% { transform: translateY(calc(var(--i) * -2px)); }
+  50% { transform: translate(var(--sx), -16px) rotate(var(--sr)); }
+  100% { transform: translateY(calc(var(--i) * -2px)); }
+}
+.shuffle-fx { animation: deckOut .15s ease-in .74s forwards; }
+
+.fx-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.fx-grid button { border: 1px solid var(--line); background: rgba(0,0,0,.25); border-radius: 10px; padding: 10px 4px; font-weight: 700; font-size: 14px; }
+.fx-grid button.on { border-color: var(--gold); background: var(--gold); color: var(--ink); }
+.fx-grid button:disabled:not(.on) { opacity: .5; }
+
 /* Nặn bài */
 .hand.sq { gap: 16px; align-items: center; min-height: calc(var(--pw) * 1.42 + 8px); }
 .fan { display: flex; align-items: center; }

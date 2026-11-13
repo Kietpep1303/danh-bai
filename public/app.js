@@ -18,6 +18,36 @@
   // Hiệu ứng chia bài
   const seen = new Set(); let firstPaint = true;
   let dragging = false, pendingRender = false, autoTimer = null;
+  let lastRoundId = null;
+  const FX = { random: 'Ngẫu nhiên', fly: 'Bay thẳng', spin: 'Xoay tít', flip: 'Lật bay', arc: 'Vòng cung', snap: 'Búng nhanh' };
+  const FX_LIST = ['fly', 'spin', 'flip', 'arc', 'snap'];
+  // "Ngẫu nhiên": chọn theo mã ván để cả bàn thấy cùng một kiểu
+  const fxFor = id => {
+    if (S.dealFx && S.dealFx !== 'random') return S.dealFx;
+    let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return FX_LIST[Math.abs(h) % FX_LIST.length];
+  };
+
+  // ---------- Âm thanh lá bài (tự tạo, không cần file) ----------
+  let soundOn = (() => { try { return JSON.parse(localStorage.getItem('banbai') || '{}').sound !== false; } catch { return true; } })(), actx = null;
+  const unlockAudio = () => {
+    if (!soundOn) return;
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch {}
+  };
+  document.addEventListener('pointerdown', unlockAudio, { passive: true });
+  function sfx(kind, when = 0) {
+    if (!soundOn || !actx || actx.state !== 'running') return;
+    const t = actx.currentTime + when / 1000;
+    const len = kind === 'shuffle' ? 0.09 : 0.05;
+    const buf = actx.createBuffer(1, Math.ceil(actx.sampleRate * len), actx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, kind === 'shuffle' ? 2 : 4);
+    const src = actx.createBufferSource(); src.buffer = buf;
+    const f = actx.createBiquadFilter(); f.type = 'bandpass';
+    f.frequency.value = kind === 'flip' ? 2400 : kind === 'shuffle' ? 1500 : 3200; f.Q.value = 0.9;
+    const g = actx.createGain(); g.gain.value = kind === 'shuffle' ? 0.25 : 0.4;
+    src.connect(f); f.connect(g); g.connect(actx.destination); src.start(t);
+  }
   let offset = 0;         // lệch đồng hồ với server
 
   const store = {
@@ -160,6 +190,18 @@
             <button ${dis} class="${S.dealerMode === 'random3' ? 'on' : ''}" data-mode="random3">Ngẫu nhiên 3 ván</button>
           </div></div>` : ''}
         ${!isHost ? '<p class="note">Chỉ chủ phòng đổi được trò chơi và mức cược.</p>' : ''}
+        <div>
+          <h3>Kiểu phát bài</h3>
+          <div class="fx-grid">${Object.entries(FX).map(([k, v]) => `<button ${dis} class="${(S.dealFx || 'random') === k ? 'on' : ''}" data-fx="${k}">${v}</button>`).join('')}</div>
+          <p class="note">Cả bàn thấy cùng một kiểu. "Ngẫu nhiên" đổi kiểu mỗi ván.</p>
+        </div>
+        <div>
+          <h3>Âm thanh</h3>
+          <div class="seg">
+            <button class="${soundOn ? 'on' : ''}" data-sound="1">Bật tiếng</button>
+            <button class="${soundOn ? '' : 'on'}" data-sound="0">Tắt tiếng</button>
+          </div>
+        </div>
         <button class="btn ghost" data-leave>Rời phòng</button>
       </div>`;
   }
@@ -169,6 +211,12 @@
     root.querySelectorAll('[data-set-game]').forEach(b => b.onclick = () => emit('settings', { game: b.dataset.setGame }));
     root.querySelectorAll('[data-bet]').forEach(b => b.onclick = () => emit('settings', { bet: +b.dataset.bet }));
     root.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => emit('settings', { dealerMode: b.dataset.mode }));
+    root.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => emit('settings', { dealFx: b.dataset.fx }));
+    root.querySelectorAll('[data-sound]').forEach(b => b.onclick = () => {
+      soundOn = b.dataset.sound === '1'; store.set({ sound: soundOn });
+      if (soundOn) { unlockAudio(); setTimeout(() => sfx('deal'), 50); }
+      render();
+    });
     const lv = root.querySelector('[data-leave]');
     if (lv) lv.onclick = () => {
       if (!confirm('Rời phòng?')) return;
@@ -382,20 +430,61 @@
   function animateDeal() {
     const els = [...app.querySelectorAll('[data-k]')].filter(el => !seen.has(el.dataset.k));
     els.forEach(el => seen.add(el.dataset.k));
+    const r = S.round;
+    const newRound = r && r.id !== lastRoundId;
+    if (r) lastRoundId = r.id;
     if (firstPaint) { firstPaint = false; return; }
     if (!els.length || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const src = app.querySelector('.center') || app.querySelector('.status') || app.querySelector('.felt');
     const fr = src.getBoundingClientRect();
     const ox = fr.left + fr.width / 2, oy = fr.top + fr.height / 2;
+    const fx = fxFor(r ? r.id : 'x');
+    // ván mới: xào bài giữa bàn trước rồi mới phát
+    const intro = newRound && els.length > 2 ? shuffleShow(ox, oy) : 0;
     els.sort((a, b) => (parseInt(a.dataset.i) || 0) - (parseInt(b.dataset.i) || 0) || (+a.dataset.j - +b.dataset.j));
-    const step = Math.min(85, 1500 / els.length);
+    const base = fx === 'snap' ? 45 : fx === 'arc' ? 95 : 80;
+    const step = Math.min(base, 1700 / els.length);
     els.forEach((el, n) => {
       const b = el.getBoundingClientRect();
-      el.style.setProperty('--dx', (ox - b.left - b.width / 2) + 'px');
-      el.style.setProperty('--dy', (oy - b.top - b.height / 2) + 'px');
-      el.style.animationDelay = Math.round(n * step) + 'ms';
-      el.classList.add('dealing');
+      const dx = ox - b.left - b.width / 2, dy = oy - b.top - b.height / 2;
+      el.style.setProperty('--dx', dx + 'px');
+      el.style.setProperty('--dy', dy + 'px');
+      // điểm giữa vòng cung: lệch lên trên, cong về phía ngoài
+      el.style.setProperty('--mx', dx / 2 + (dx > 0 ? -1 : 1) * Math.min(80, Math.abs(dy) / 3) + 'px');
+      el.style.setProperty('--my', dy / 2 - 90 + 'px');
+      el.style.setProperty('--rot', ((n % 2 ? 1 : -1) * (8 + (n * 37) % 20)) + 'deg');
+      const delay = intro + Math.round(n * step);
+      el.style.animationDelay = delay + 'ms';
+      el.classList.remove('dealing', 'fx-fly', 'fx-spin', 'fx-flip', 'fx-arc', 'fx-snap');
+      void el.offsetWidth;
+      el.classList.add('dealing', 'fx-' + fx);
+      sfx('deal', delay);
+      if (fx === 'flip' && el.dataset.id) sfx('flip', delay + 330);
     });
+    deckShow(ox, oy, intro, intro + els.length * step + 200);
+  }
+  // Bộ bài nằm giữa bàn, vơi dần trong lúc phát
+  function deckShow(x, y, from, until) {
+    const d = document.createElement('div');
+    d.className = 'deck-fx';
+    d.style.left = x + 'px'; d.style.top = y + 'px';
+    d.innerHTML = '<div class="card back"></div><div class="card back"></div><div class="card back"></div>';
+    d.style.animation = `deckIn .2s ease-out ${Math.max(0, from - 80)}ms backwards, deckOut .3s ease-in ${until}ms forwards`;
+    document.body.appendChild(d);
+    setTimeout(() => d.remove(), until + 400);
+  }
+  // Xào bài: hai nửa bộ bài tách ra rồi đan vào nhau, 2 lần
+  function shuffleShow(x, y) {
+    const w = document.createElement('div');
+    w.className = 'shuffle-fx';
+    w.style.left = x + 'px'; w.style.top = y + 'px';
+    let html = '';
+    for (let i = 0; i < 6; i++) html += `<div class="card back sh ${i % 2 ? 'r' : 'l'}" style="--i:${i}"></div>`;
+    w.innerHTML = html;
+    document.body.appendChild(w);
+    for (let k = 0; k < 6; k++) sfx('shuffle', 120 + k * 95);
+    setTimeout(() => w.remove(), 900);
+    return 760;
   }
 
   function bind() {
