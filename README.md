@@ -37,9 +37,12 @@ Mở http://localhost:3000
 - **Hiệu ứng:** chủ phòng chọn kiểu phát bài (Bay thẳng, Xoay tít, Lật bay, Vòng cung, Búng nhanh hoặc Ngẫu nhiên mỗi ván). Mỗi người tự bật/tắt tiếng lá bài trong bảng Phòng.
 - **Trò chuyện:** bấm 💬 để chat cả phòng, có emoji và câu nói nhanh. Tin nhắn hiện thành bong bóng trên ghế người gửi.
 - **Chuông giục:** bấm 🔔 trên ghế người đang tới lượt để kêu "bon bon" nhắc họ đánh (mỗi người 5 giây gõ một lần).
-- **Khiêu khích:** bấm 😈 ở góc ghế người khác để ném cà chua, trứng thối, dép tổ ong, bom hoặc thả emoji. 💩 chỉ ném được vào người bạn vừa ăn (chặn bài, chặt, về trên họ, thắng tiền); lúc đó nút 💩 nhấp nháy sẵn trên ghế họ.
+- **Khiêu khích:** bấm 😈 ở góc ghế người khác để ném cà chua, trứng thối, dép tổ ong, bom hoặc thả emoji. Giữ nút để ném liên tục, hoặc bấm "Mưa" để ném một loạt 24 món. Đồ ném trúng dính đầy màn hình người bị ném, họ bấm "🧻 Lau màn hình" để lau. 💩 chỉ ném được vào người bạn vừa ăn (chặn bài, chặt, về trên họ, thắng tiền); lúc đó nút 💩 nhấp nháy cạnh nút 😈. Mỗi người tối đa 30 món mỗi 3 giây.
+- **Xếp bài (tiến lên):** bấm "Số" hoặc "Chất" cạnh số lá để xếp lại, hoặc kéo một lá sang trái/phải để đổi chỗ. Bấm nhẹ vẫn là chọn lá như cũ.
 - **Đánh bài:** lá đánh ra bay từ tay người đánh xuống giữa bàn, chặt thì hiện chữ "CHẶT!" và rung bàn.
 - **Tiến lên:** bạn luôn ngồi dưới, đánh ngược chiều kim đồng hồ (phải → trên → trái), mũi tên đỏ chỉ người đang tới lượt.
 - **Hết giờ:** mỗi lượt 60 giây (người rớt mạng 15 giây), quá giờ máy tự đi giùm.
+
+Icon (đồ ném, emoji, chat, chuông) được vẽ bằng SVG kiểu truyện tranh trong `public/icons.js`, nên máy nào cũng nhìn giống nhau. Muốn thêm icon thì vẽ thêm ở đó.
 
 Luật nằm trong thư mục `games/`, muốn đổi cách tính tiền thì sửa ở đó.

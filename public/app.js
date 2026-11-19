@@ -1,6 +1,7 @@
 (() => {
   const socket = io({ transports: ['websocket', 'polling'] });
   const app = document.getElementById('app');
+  const { ico, rich } = window.ICONS; // icon vẽ kiểu manga thay cho emoji
   const SUITS = ['♠', '♣', '♦', '♥'];
   const RANKS = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K' };
   const GAMES = {
@@ -101,9 +102,9 @@
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pname = id => { const p = S && S.players.find(x => x.id === id); return p ? esc(p.name) : '?'; };
   let toastT;
-  function toast(msg) {
+  function toast(msg, html) {
     const t = document.getElementById('toast');
-    t.textContent = msg; t.classList.add('show');
+    if (html) t.innerHTML = msg; else t.textContent = msg; t.classList.add('show');
     clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400);
   }
   function emit(ev, data) {
@@ -149,7 +150,7 @@
   chatEl.innerHTML = `
     <div class="chat-head"><b>Trò chuyện</b><button class="btn small ghost" type="button" data-chat-close>Đóng</button></div>
     <div class="chat-list" role="log" aria-live="polite"></div>
-    <div class="chat-quick">${QUICK.map(q => `<button type="button">${esc(q)}</button>`).join('')}</div>
+    <div class="chat-quick">${QUICK.map(q => `<button type="button" data-q="${esc(q)}">${rich(esc(q))}</button>`).join('')}</div>
     <form class="chat-form">
       <input maxlength="200" autocomplete="off" enterkeyhint="send" placeholder="Nhắn gì đó…" aria-label="Tin nhắn">
       <button class="btn small" type="submit">Gửi</button>
@@ -163,7 +164,7 @@
     const el = document.createElement('div');
     el.className = 'msg' + (mine ? ' mine' : '') + (prev && prev.pid === m.pid && m.t - prev.t < 120000 ? ' cont' : '');
     if (!mine) { const n = document.createElement('span'); n.className = 'msg-name'; n.textContent = m.name; el.appendChild(n); }
-    const b = document.createElement('div'); b.className = 'msg-text'; b.textContent = m.text; b.title = hhmm(m.t);
+    const b = document.createElement('div'); b.className = 'msg-text'; b.innerHTML = rich(esc(m.text)); b.title = hhmm(m.t);
     if (/^\p{Extended_Pictographic}{1,3}$/u.test(m.text)) b.classList.add('big');
     el.appendChild(b);
     return el;
@@ -186,7 +187,7 @@
     if (r.ok && text === chatInput.value.trim()) chatInput.value = '';
   }
   chatEl.querySelector('form').onsubmit = e => { e.preventDefault(); sendChat(chatInput.value); };
-  chatEl.querySelectorAll('.chat-quick button').forEach(b => b.onclick = () => sendChat(b.textContent));
+  chatEl.querySelectorAll('.chat-quick button').forEach(b => b.onclick = () => sendChat(b.dataset.q));
   chatEl.querySelector('[data-chat-close]').onclick = () => setChatOpen(false);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && chatOpen) setChatOpen(false); });
   // bàn phím điện thoại che khung chat: đẩy khung lên theo vùng nhìn thấy
@@ -221,7 +222,7 @@
     sfx('bell', forMe ? -1 : 0); // người bị giục nghe to hơn
     if (forMe) {
       if (navigator.vibrate) try { navigator.vibrate([90, 60, 90]); } catch {}
-      toast(`🔔 ${name} đang giục bạn đánh!`);
+      toast(`${ico('🔔')} ${esc(name)} đang giục bạn đánh!`, true);
     }
     ringing[to] = Date.now() + 1100;
     render();
@@ -229,7 +230,7 @@
   });
   const isRinging = id => ringing[id] > Date.now();
   const ringFx = id => isRinging(id) ? '<span class="ring-fx" aria-hidden="true">BON BON!</span>' : '';
-  const bellBtn = (id, name) => `<button class="bell" data-ring title="Gõ chuông giục ${name}" aria-label="Gõ chuông giục ${name}">🔔</button>`;
+  const bellBtn = (id, name) => `<button class="bell" data-ring title="Gõ chuông giục ${name}" aria-label="Gõ chuông giục ${name}">${ico('🔔')}</button>`;
 
   // ---------- Khiêu khích: ném đồ, thả emoji vào ghế người khác ----------
   // 💩 chỉ ném được vào người mình vừa "ăn" (chặn bài, chặt, thắng tiền). Các món khác ném lúc nào cũng được.
@@ -238,8 +239,6 @@
   const HARD = new Set(THROW);
   const POW = { '💩': 'PẸT!', '🍅': 'BẸP!', '🥚': 'BỐP!', '🩴': 'CHÁT!', '💣': 'BÙM!' };
   const beaten = {}; // pid -> hạn được ném 💩
-  const stains = {}; // pid -> { item, until }: vết dính trên ghế
-  let tauntAt = 0;
   const canPoop = id => beaten[id] > Date.now();
   const markBeat = (id, ms = 20000) => { if (id && (!S || id !== S.me)) { beaten[id] = Date.now() + ms; setTimeout(() => S && render(), ms + 50); } };
   // so state cũ và mới để biết mình vừa ăn ai
@@ -249,7 +248,7 @@
     if (!a || a.id !== b.id) { for (const k in beaten) delete beaten[k]; }
     if (b.game === 'tienlen') {
       const pt = a && a.id === b.id ? a.table : null;
-      if (b.table && b.table.by === me && pt && pt.by !== me && (!pt || pt.cards[0].id !== b.table.cards[0].id)) markBeat(pt.by);
+      if (b.table && b.table.by === me && pt && pt.by !== me && pt.cards[0].id !== b.table.cards[0].id) markBeat(pt.by);
       if (b.phase === 'done' && b.ranking && (!a || a.phase !== 'done')) {
         const i = b.ranking.indexOf(me);
         if (i >= 0) b.ranking.slice(i + 1).forEach(id => markBeat(id, 30000));
@@ -261,14 +260,26 @@
       else if (mine.result > 0) markBeat(b.dealer, 30000);
     }
   }
-  const tauntBtn = (id, name) => canPoop(id)
-    ? `<button class="taunt-btn hot" data-taunt="${id}" data-item="💩" title="Ném 💩 vào ${name}" aria-label="Ném phân vào ${name}">💩</button>`
-    : `<button class="taunt-btn" data-taunt="${id}" title="Khiêu khích ${name}" aria-label="Khiêu khích ${name}">😈</button>`;
-  const stainFx = id => {
-    const s = stains[id];
-    return s && s.until > Date.now() ? `<span class="stain ${HARD.has(s.item) ? 'hard' : ''}" aria-hidden="true">${s.item}</span>` : '';
-  };
-  const isHit = id => stains[id] && stains[id].until > Date.now() && HARD.has(stains[id].item);
+  const tauntBtn = (id, name) => `<button class="taunt-btn" data-taunt="${id}" title="Khiêu khích ${name}" aria-label="Khiêu khích ${name}">${ico('😈')}</button>`
+    + (canPoop(id) ? `<button class="taunt-btn hot" data-taunt="${id}" data-item="💩" title="Bấm hoặc giữ để ném 💩 vào ${name}" aria-label="Ném phân vào ${name}">${ico('💩')}</button>` : '');
+
+  // ném liên tục: bấm là ném, giữ thì ném liền tay
+  let spamTimer = null;
+  const stopSpam = () => { clearInterval(spamTimer); spamTimer = null; };
+  function holdToSpam(el, to, item) {
+    el.onpointerdown = e => {
+      e.preventDefault(); e.stopPropagation();
+      stopSpam(); sendTaunt(to, item);
+      spamTimer = setInterval(() => sendTaunt(to, item), 110);
+      try { el.setPointerCapture(e.pointerId); } catch {}
+    };
+    el.onpointerup = el.onpointercancel = el.onlostpointercapture = stopSpam;
+    el.onclick = e => { e.stopPropagation(); if (e.detail === 0) sendTaunt(to, item); }; // bàn phím
+  }
+  function rain(to, item, n = 24) {
+    let k = 0;
+    const t = setInterval(() => { sendTaunt(to, item); if (++k >= n) clearInterval(t); }, 70);
+  }
 
   // bảng chọn món ném, nằm ngoài #app nên không mất khi bàn vẽ lại
   const pop = document.createElement('div');
@@ -277,73 +288,177 @@
   let popFor = null;
   function openTaunt(id, btn) {
     popFor = id;
-    const nm = pname(id);
-    const b = (it, dis) => `<button data-item="${it}" ${dis ? 'disabled title="Phải ăn được người này mới ném được"' : ''}>${it}${dis ? '<i>🔒</i>' : ''}</button>`;
-    pop.innerHTML = `<div class="tp-head">Ném vào <b>${nm}</b></div>
-      <div class="tp-grid">${THROW.map(it => b(it, it === '💩' && !canPoop(id))).join('')}</div>
+    const nm = pname(id), ok = canPoop(id), rainItem = ok ? '💩' : '🍅';
+    const b = (it, dis) => `<button data-item="${it}" ${dis ? 'disabled title="Phải ăn được người này mới ném được"' : ''}>${ico(it)}${dis ? `<i>${ico('🔒')}</i>` : ''}</button>`;
+    pop.innerHTML = `<div class="tp-head">Ném vào <b>${nm}</b> <span>giữ để ném liên tục</span></div>
+      <div class="tp-grid">${THROW.map(it => b(it, it === '💩' && !ok)).join('')}</div>
+      <button class="tp-rain" data-rain="${rainItem}">${ico('🌧')} Mưa ${ico(rainItem)} ×24</button>
       <div class="tp-grid emo">${EMOJI.map(it => b(it)).join('')}</div>
-      ${canPoop(id) ? '' : '<small>💩 mở khi bạn ăn được người này</small>'}`;
+      ${ok ? '' : `<small>${ico('💩')} mở khi bạn ăn được người này</small>`}`;
     pop.hidden = false;
     const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
     const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
     const y = r.bottom + 8 + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : r.bottom + 8;
     pop.style.left = x + 'px'; pop.style.top = y + 'px';
-    pop.querySelectorAll('[data-item]').forEach(e => e.onclick = () => { sendTaunt(id, e.dataset.item); closeTaunt(); });
+    pop.querySelectorAll('[data-item]:not(:disabled)').forEach(e => holdToSpam(e, id, e.dataset.item));
+    pop.querySelector('[data-rain]').onclick = e => { e.stopPropagation(); unlockAudio(); rain(id, e.currentTarget.dataset.rain); };
   }
-  const closeTaunt = () => { pop.hidden = true; popFor = null; };
+  const closeTaunt = () => { pop.hidden = true; popFor = null; stopSpam(); };
   document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-taunt]')) closeTaunt(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTaunt(); });
+  let tauntAt = 0, outOfAmmo = 0;
   function sendTaunt(to, item) {
     unlockAudio();
-    if (Date.now() - tauntAt < 1200) return toast('Từ từ, ném chậm thôi');
+    if (Date.now() - tauntAt < 60) return;
     tauntAt = Date.now();
-    emit('taunt', { to, item });
+    emit('taunt', { to, item }).then(r => {
+      if (r && r.error && Date.now() - outOfAmmo > 2000) { outOfAmmo = Date.now(); stopSpam(); }
+    });
   }
   // vị trí ghế của một người trên màn hình
-  function seatRect(id) {
+  function seatEl(id) {
     let el = app.querySelector(`[data-pid="${id}"]`);
-    if (!el && id === S.me) el = app.querySelector('.me-head') || app.querySelector('.hand');
-    if (!el) el = app.querySelector('.bar') || app;
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    if (!el && S && id === S.me) el = app.querySelector('.me-head') || app.querySelector('.hand');
+    return el;
   }
+  function seatRect(id) {
+    const r = (seatEl(id) || app.querySelector('.bar') || app).getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+  }
+
+  // Lớp "bãi chiến trường": đồ ném trúng dính lại, càng ném nhiều càng đầy màn hình
+  const mess = document.createElement('div');
+  mess.className = 'mess'; mess.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(mess);
+  const wipe = document.createElement('button');
+  wipe.className = 'wipe-btn'; wipe.hidden = true; wipe.innerHTML = `${ico('🧻')} Lau màn hình`;
+  wipe.onclick = () => { mess.querySelectorAll('.mine').forEach(x => x.remove()); syncWipe(); };
+  document.body.appendChild(wipe);
+  const pile = {}; // pid -> số món đang dính quanh ghế
+  const syncWipe = () => { wipe.hidden = mess.querySelectorAll('.mine').length < 6; };
+  function stick(item, x, y, size, life, mine, pid) {
+    const s = document.createElement('span');
+    s.className = 'goo' + (mine ? ' mine' : '');
+    s.innerHTML = ico(item);
+    s.style.left = x + 'px'; s.style.top = y + 'px'; s.style.fontSize = size + 'px';
+    s.style.setProperty('--r', (Math.random() * 70 - 35) + 'deg');
+    s.style.animationDuration = `.18s, ${life}ms`;
+    mess.appendChild(s);
+    if (pid) pile[pid] = (pile[pid] || 0) + 1;
+    setTimeout(() => { s.remove(); if (pid) pile[pid]--; syncWipe(); }, life);
+    while (mess.childElementCount > 220) mess.firstElementChild.remove();
+    syncWipe();
+  }
+  let lastHitSfx = 0, lastWhoosh = 0, hitToast = { t: 0, n: 0 };
   socket.on('taunt', ({ from, to, item, name }) => {
     if (!S) return;
     const a = seatRect(from), b = seatRect(to);
     const hard = HARD.has(item);
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const land = () => {
-      sfx(hard ? 'splat' : 'pop');
-      if (to === S.me) {
-        if (hard && navigator.vibrate) try { navigator.vibrate(120); } catch {}
-        toast(`${item} ${name} ${hard ? 'ném' : 'thả'} vào bạn!`);
-      }
+      const now = Date.now();
+      if (now - lastHitSfx > 55) { lastHitSfx = now; sfx(hard ? 'splat' : 'pop'); }
       const b2 = seatRect(to);
+      if (to === S.me) {
+        if (hard && navigator.vibrate) try { navigator.vibrate(60); } catch {}
+        hitToast.n = now - hitToast.t < 2500 ? hitToast.n + 1 : 1; hitToast.t = now;
+        toast(`${ico(item)} ${esc(name)} ${hard ? 'ném' : 'thả'} vào bạn!${hitToast.n > 1 ? ` ×${hitToast.n}` : ''}`, true);
+        // dính khắp màn hình mình
+        if (hard) stick(item, 20 + Math.random() * (innerWidth - 40), 20 + Math.random() * (innerHeight - 40), 48 + Math.random() * 90, 9000, true);
+      }
+      // dính quanh ghế người bị ném, càng nhiều càng lan rộng
+      const n = pile[to] || 0, spread = Math.min(260, 14 + n * 7), ang = Math.random() * Math.PI * 2;
+      const r0 = Math.sqrt(Math.random()) * spread;
+      stick(item, b2.x + Math.cos(ang) * r0 * 1.3, b2.y + Math.sin(ang) * r0 * .8, hard ? 26 + Math.random() * 20 : 24, hard ? 7000 : 2500, false, to);
       const s = document.createElement('div');
       s.className = 'splat-fx' + (hard ? ' hard' : '');
       s.style.left = b2.x + 'px'; s.style.top = b2.y + 'px';
-      s.innerHTML = `<span class="big">${item}</span>${POW[item] ? `<b>${POW[item]}</b>` : ''}${hard ? '<i></i><i></i><i></i><i></i><i></i><i></i>' : ''}`;
+      s.innerHTML = `<span class="big">${ico(item)}</span>${POW[item] && n % 4 === 0 ? `<b>${POW[item]}</b>` : ''}${hard && n < 12 ? '<i></i><i></i><i></i><i></i><i></i><i></i>' : ''}`;
       document.body.appendChild(s);
       setTimeout(() => s.remove(), 1100);
-      stains[to] = { item, until: Date.now() + (hard ? 3000 : 1800) };
-      render();
-      setTimeout(() => { if (stains[to] && stains[to].until <= Date.now()) { delete stains[to]; render(); } }, hard ? 3050 : 1850);
+      const el = seatEl(to);
+      if (el && hard && !reduce) el.animate([{ transform: 'none' }, { transform: 'translate(-4px,1px) rotate(-1.5deg)' }, { transform: 'translate(4px,-1px) rotate(1.5deg)' }, { transform: 'none' }], { duration: 220 });
     };
     if (reduce) return land();
     const p = document.createElement('div');
-    p.className = 'throw-fx'; p.textContent = item;
+    p.className = 'throw-fx'; p.innerHTML = ico(item);
     p.style.left = a.x + 'px'; p.style.top = a.y + 'px';
     document.body.appendChild(p);
-    const dx = b.x - a.x, dy = b.y - a.y, lift = -Math.min(160, 60 + Math.hypot(dx, dy) / 3);
+    const tx = b.x + (Math.random() - .5) * Math.min(80, b.w * .5), ty = b.y + (Math.random() - .5) * Math.min(40, b.h * .5);
+    const dx = tx - a.x, dy = ty - a.y, lift = -Math.min(160, 60 + Math.hypot(dx, dy) / 3) * (.7 + Math.random() * .6);
     const spin = (dx >= 0 ? 1 : -1) * (hard ? 540 : 200);
     const dur = Math.min(800, 420 + Math.hypot(dx, dy) / 3);
-    sfx('whoosh');
+    const now = Date.now();
+    if (now - lastWhoosh > 90) { lastWhoosh = now; sfx('whoosh'); }
     p.animate([
       { transform: 'translate(-50%,-50%) translate(0,0) rotate(0) scale(.6)' },
       { transform: `translate(-50%,-50%) translate(${dx / 2}px,${dy / 2 + lift}px) rotate(${spin / 2}deg) scale(1.35)`, offset: .5 },
       { transform: `translate(-50%,-50%) translate(${dx}px,${dy}px) rotate(${spin}deg) scale(1)` },
     ], { duration: dur, easing: 'cubic-bezier(.3,.1,.4,1)', fill: 'forwards' }).onfinish = () => { p.remove(); land(); };
   });
+
+  // ---------- Tự xếp bài trên tay (tiến lên): kéo thả hoặc bấm xếp theo số / chất ----------
+  let handOrder = [], handRound = null;
+  const tlRank = c => (c.r === 1 ? 14 : c.r === 2 ? 15 : c.r);
+  function orderedHand(r, cards) {
+    if (handRound !== r.id) { handRound = r.id; handOrder = []; }
+    const ids = new Set(cards.map(c => c.id));
+    handOrder = handOrder.filter(id => ids.has(id));
+    cards.forEach(c => { if (!handOrder.includes(c.id)) handOrder.push(c.id); });
+    const m = new Map(cards.map(c => [c.id, c]));
+    return handOrder.map(id => m.get(id));
+  }
+  function sortHandBy(mode) {
+    const cards = (S.round.seats.find(x => x.id === S.me) || {}).cards || [];
+    const byRank = (a, b) => tlRank(a) - tlRank(b) || a.s - b.s;
+    handOrder = cards.slice().sort(mode === 'suit' ? (a, b) => a.s - b.s || tlRank(a) - tlRank(b) : byRank).map(c => c.id);
+    render();
+  }
+  // kéo một lá sang trái/phải để đổi chỗ; bấm nhẹ thì chọn lá như cũ
+  function bindHandDrag() {
+    const hand = app.querySelector('.hand.tl');
+    if (!hand) return;
+    hand.querySelectorAll('.card[data-id]').forEach(el => {
+      el.onpointerdown = e => {
+        if (e.button > 0) return;
+        const sx = e.clientX, sy = e.clientY, id = +el.dataset.id;
+        let moved = false;
+        const others = [...hand.querySelectorAll('.card[data-id]')].filter(c => c !== el);
+        const move = ev => {
+          const dx = ev.clientX - sx, dy = ev.clientY - sy;
+          if (!moved && Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+          if (!moved) { moved = true; dragging = true; el.classList.add('moving'); }
+          el.style.transform = `translate(${dx}px, ${Math.min(0, dy) - 16}px) rotate(${dx / 30}deg)`;
+          // chỗ chèn: đếm số lá có tâm phần lộ ra nằm bên trái ngón tay
+          const rects = others.map(c => c.getBoundingClientRect());
+          let at = 0;
+          rects.forEach((rc, k) => { const step = k + 1 < rects.length ? rects[k + 1].left - rc.left : rc.width; if (rc.left + Math.min(rc.width, step) / 2 < ev.clientX) at = k + 1; });
+          others.forEach((c, k) => c.classList.toggle('gap-l', k === at));
+          el.dataset.at = at;
+        };
+        const up = () => {
+          removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+          if (!moved) { sel.has(id) ? sel.delete(id) : sel.add(id); render(); return; }
+          const rest = others.map(c => +c.dataset.id), at = +(el.dataset.at || 0);
+          rest.splice(at, 0, id);
+          handOrder = rest;
+          dragging = false; pendingRender = false;
+          render();
+        };
+        addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+      };
+    });
+  }
+  // lá trên tay trượt mượt về chỗ mới (sau khi xếp, kéo hoặc đánh bớt)
+  function flipHand(prev) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    app.querySelectorAll('.hand.tl .card[data-id]').forEach(el => {
+      const p = prev[el.dataset.id];
+      if (!p) return;
+      const b = el.getBoundingClientRect(), dx = p.left - b.left;
+      if (Math.abs(dx) > 2) el.animate([{ translate: `${dx}px 0` }, { translate: '0 0' }], { duration: 220, easing: 'ease-out' });
+    });
+  }
 
   // ---------- Hiệu ứng đánh bài xuống giữa bàn (tiến lên) ----------
   let lastTableKey, lastLogT = 0;
@@ -402,7 +517,7 @@
   }
 
   const isEmoji = t => /^\p{Extended_Pictographic}{1,3}$/u.test(t);
-  const bubble = (id, up) => bubbles[id] ? `<div class="bubble ${up ? 'up' : ''} ${isEmoji(bubbles[id].text) ? 'emoji' : ''}">${esc(bubbles[id].text)}</div>` : '';
+  const bubble = (id, up) => bubbles[id] ? `<div class="bubble ${up ? 'up' : ''} ${isEmoji(bubbles[id].text) ? 'emoji' : ''}">${rich(esc(bubbles[id].text))}</div>` : '';
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !socket.connected) socket.connect(); });
   setInterval(() => {
     document.querySelectorAll('[data-dl]').forEach(el => {
@@ -556,8 +671,8 @@
     if (r.game === 'xidach' && seat.stood && seat.result == null && !dealer) info = info || 'Đã dằn';
     const timer = isTurn ? `<span class="turn-tools">${S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span>` : ''}${seat.id !== S.me ? bellBtn(seat.id, esc(p.name)) : ''}</span>` : '';
     const canCheck = r.game === 'xidach' && r.phase === 'dealer' && S.me === r.dealer && !dealer && seat.result == null;
-    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''} ${isHit(seat.id) ? 'hit' : ''}" data-pid="${seat.id}">
-      ${ringFx(seat.id)}${stainFx(seat.id)}${seat.id !== S.me ? tauntBtn(seat.id, esc(p.name)) : ''}
+    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''}" data-pid="${seat.id}">
+      ${ringFx(seat.id)}${seat.id !== S.me ? tauntBtn(seat.id, esc(p.name)) : ''}
       <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}</span><span class="seat-pts">${p.points}</span></div>
       ${bubble(seat.id)}
       <div class="mini">${cards}</div>
@@ -577,8 +692,8 @@
   function selfSeat(r, mine) {
     const isTurn = r.turn === S.me && r.phase !== 'done';
     const st = mine.place ? `Về thứ ${mine.place}` : mine.passed ? 'Bỏ lượt' : `${mine.count} lá`;
-    return `<div class="seat self ${isTurn ? 'turn' : ''} ${isRinging(S.me) ? 'ringing' : ''} ${isHit(S.me) ? 'hit' : ''}" data-pid="${S.me}">
-      ${bubble(S.me, true)}${ringFx(S.me)}${stainFx(S.me)}
+    return `<div class="seat self ${isTurn ? 'turn' : ''} ${isRinging(S.me) ? 'ringing' : ''}" data-pid="${S.me}">
+      ${bubble(S.me, true)}${ringFx(S.me)}
       <div class="seat-top"><span class="seat-name">Bạn</span><span class="seat-pts">${st}</span></div>
       ${isTurn && S.deadline ? `<div class="seat-info"><span>Tới lượt bạn</span><span class="timer" data-dl="${S.deadline}"></span></div>` : ''}
     </div>`;
@@ -653,11 +768,12 @@
       const nan = r.game !== 'tienlen' ? squeeze(r, mine, myJ) : null;
       const locked = nan && nan.hidden > 0;
       let infoTxt = locked ? 'Vuốt lá bài để nặn' : mine.info ? esc(mine.info) : '';
-      if (r.game === 'tienlen') infoTxt = mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`;
-      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''} ${isHit(S.me) ? 'hit' : ''}" ${r.game === 'tienlen' ? '' : `data-pid="${S.me}"`}>${r.game === 'tienlen' ? '' : stainFx(S.me)}<span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${ringFx(S.me)}</span>
+      if (r.game === 'tienlen') infoTxt = (mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`)
+        + (mine.cards && mine.cards.length > 1 ? ` <span class="sort-tools">Xếp <button class="btn small ghost" data-sort="rank">Số</button><button class="btn small ghost" data-sort="suit">Chất</button></span>` : '');
+      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}" ${r.game === 'tienlen' ? '' : `data-pid="${S.me}"`}><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${ringFx(S.me)}</span>
         <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.points} điểm</span></div>`;
       if (r.game === 'tienlen') {
-        hand = `<div class="hand tl">${(mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
+        hand = `<div class="hand tl">${orderedHand(r, mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
         if (r.phase !== 'done') actions = `
           <button class="btn ghost" data-act="pass" ${myTurn && r.table ? '' : 'disabled'}>Bỏ lượt</button>
           <button class="btn ghost" data-clear ${sel.size ? '' : 'disabled'}>Bỏ chọn</button>
@@ -689,7 +805,7 @@
         <header class="bar">
           <button class="code-chip" data-share aria-label="Chia sẻ mã phòng">${S.code}</button>
           <div class="bar-title"><b>${g.name}</b>Cược ${S.bet}${g.dealer && S.dealerId ? `, cái: ${pname(S.dealerId)}` : ''}</div>
-          <button class="btn small ghost chat-btn ${chatOpen ? 'on' : ''}" data-chat aria-label="Trò chuyện${unread ? `, ${unread} tin chưa đọc` : ''}">💬${unread ? `<span class="unread">${unread > 9 ? '9+' : unread}</span>` : ''}</button>
+          <button class="btn small ghost chat-btn ${chatOpen ? 'on' : ''}" data-chat aria-label="Trò chuyện${unread ? `, ${unread} tin chưa đọc` : ''}">${ico('💬')}${unread ? `<span class="unread">${unread > 9 ? '9+' : unread}</span>` : ''}</button>
           ${r ? '<button class="btn small ghost" data-sheet>Phòng</button>' : ''}
         </header>
         <section class="felt"><div class="room-inner" style="display:flex;flex-direction:column;gap:12px">${body}</div></section>
@@ -846,12 +962,11 @@
     app.querySelectorAll('[data-check]').forEach(b => b.onclick = () => emit('act', { type: 'check', target: b.dataset.check }));
     const st = app.querySelector('[data-start]'); if (st) st.onclick = () => emit('start');
     const cl = app.querySelector('[data-clear]'); if (cl) cl.onclick = () => { sel.clear(); render(); };
-    app.querySelectorAll('.hand.tl .card').forEach(c => c.onclick = () => {
-      const id = +c.dataset.id; sel.has(id) ? sel.delete(id) : sel.add(id); render();
-    });
-    app.querySelectorAll('[data-taunt]').forEach(b => b.onclick = e => {
+    bindHandDrag();
+    app.querySelectorAll('[data-sort]').forEach(b => b.onclick = () => sortHandBy(b.dataset.sort));
+    app.querySelectorAll('[data-taunt][data-item]').forEach(b => holdToSpam(b, b.dataset.taunt, b.dataset.item));
+    app.querySelectorAll('[data-taunt]:not([data-item])').forEach(b => b.onclick = e => {
       e.stopPropagation();
-      if (b.dataset.item) return sendTaunt(b.dataset.taunt, b.dataset.item);
       popFor === b.dataset.taunt && !pop.hidden ? closeTaunt() : openTaunt(b.dataset.taunt, b);
     });
     app.querySelectorAll('[data-ring]').forEach(b => b.onclick = () => { unlockAudio(); emit('ring'); });
@@ -879,6 +994,7 @@
     if (f2) f2.scrollTop = y; if (s2) s2.scrollTop = sy;
     animateDeal();
     animatePlay(prevHand);
+    flipHand(prevHand);
     justRevealed = null;
   }
   render();

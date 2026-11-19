@@ -17,7 +17,7 @@ const CHAT_KEEP = 60;          // số tin giữ lại mỗi phòng
 const CHAT_MAX_LEN = 200;
 const CHAT_RATE = { n: 6, ms: 10000 }; // tối đa 6 tin / 10 giây mỗi người
 const RING_COOLDOWN_MS = 5000;         // mỗi người gõ chuông cách nhau ít nhất 5 giây
-const TAUNT_MS = 1200;                // ném đồ/thả emoji: mỗi người cách nhau ít nhất 1,2 giây
+const TAUNT_RATE = { n: 30, ms: 3000 }; // ném đồ/thả emoji: tối đa 30 món / 3 giây mỗi người (cho spam thoải mái)
 const TAUNTS = ['💩', '🍅', '🥚', '🩴', '💣', '🤡', '😜', '😂', '😡', '👎', '❤️', '👍', '👏', '🔥', '🌹', '🍺'];
 
 const app = express();
@@ -213,8 +213,9 @@ io.on('connection', socket => {
     const t = room.players.find(x => x.id === d.to);
     if (!t || t.id === p.id) return reply(cb, { error: 'Chọn người để ném' });
     const now = Date.now();
-    if (now - (p.tauntAt || 0) < TAUNT_MS) return reply(cb, { error: 'Từ từ, ném chậm thôi' });
-    p.tauntAt = now;
+    p.tauntLog = (p.tauntLog || []).filter(t => now - t < TAUNT_RATE.ms);
+    if (p.tauntLog.length >= TAUNT_RATE.n) return reply(cb, { error: 'Hết đạn, đợi xíu rồi ném tiếp' });
+    p.tauntLog.push(now);
     io.to(room.code).emit('taunt', { from: p.id, to: t.id, item: d.item, name: p.name });
     reply(cb, { ok: true });
   });

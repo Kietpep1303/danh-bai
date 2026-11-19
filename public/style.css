@@ -568,7 +568,7 @@ button, input { color: var(--ink); }
 
 /* ---------- Chuông giục đánh ---------- */
 .bell {
-  border: 2.5px solid #111; background: #ffd400; border-radius: 50%; width: 32px; height: 32px; padding: 0;
+  border: 2.5px solid #111; background: #fff; border-radius: 50%; width: 32px; height: 32px; padding: 0;
   font-size: 16px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
   box-shadow: 2px 2px 0 #111; flex: none;
 }
@@ -653,7 +653,7 @@ button, input { color: var(--ink); }
   display: inline-flex; align-items: center; justify-content: center; box-shadow: 2px 2px 0 #111; cursor: pointer;
 }
 .taunt-btn:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 #111; }
-.taunt-btn.hot { background: #ffd400; width: 30px; height: 30px; top: -17px; left: -17px; font-size: 17px; animation: hotPulse .9s ease-in-out infinite; }
+.taunt-btn.hot { background: #ffd400; width: 30px; height: 30px; top: -17px; left: 16px; font-size: 17px; animation: hotPulse .9s ease-in-out infinite; }
 @keyframes hotPulse { 50% { transform: scale(1.15) rotate(-8deg); } }
 .taunt-pop {
   position: fixed; z-index: 60; background: #fff; color: #111; border: 3px solid #111; border-radius: 2px;
@@ -711,18 +711,6 @@ button, input { color: var(--ink); }
 }
 @keyframes powIn { 0% { transform: translate(-50%, 0) rotate(-8deg) scale(.3); } 20% { transform: translate(-50%, 0) rotate(-8deg) scale(1.2); } 35%, 75% { transform: translate(-50%, 0) rotate(-8deg) scale(1); opacity: 1; } 100% { opacity: 0; } }
 @keyframes drop { to { transform: translate(var(--x), var(--y)) scale(.4); opacity: 0; } }
-.stain {
-  position: absolute; right: 6px; bottom: 2px; z-index: 2; font-size: 30px; line-height: 1; pointer-events: none;
-  animation: stainIn .2s ease-out; opacity: .92;
-}
-.stain:not(.hard) { animation: stainBob 1s ease-in-out infinite; }
-.stain.hard { font-size: 34px; transform: rotate(-12deg); }
-@keyframes stainIn { from { transform: scale(1.6); } }
-@keyframes stainBob { 50% { transform: translateY(-4px); } }
-.hit { animation: hitShake .1s linear 0s 5; }
-.hit.seat { background-image: radial-gradient(circle at 75% 70%, rgba(120,70,20,.22), transparent 55%); }
-@keyframes hitShake { 0%, 100% { transform: none; } 30% { transform: translate(-4px, 1px) rotate(-1.5deg); } 70% { transform: translate(4px, -1px) rotate(1.5deg); } }
-
 /* ---------- Chặt! ---------- */
 .chop-fx {
   position: fixed; z-index: 65; pointer-events: none; transform: translate(-50%, -50%) rotate(-10deg) scale(0);
@@ -737,5 +725,54 @@ button, input { color: var(--ink); }
   100% { transform: translate(-50%, -50%) rotate(-10deg) scale(1.1); opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .taunt-btn.hot, .hit, .stain { animation: none; }
+  .taunt-btn.hot, .goo { animation: none; }
 }
+
+/* ---------- Ném liên tục: đồ dính đầy màn hình ---------- */
+.mess { position: fixed; inset: 0; z-index: 56; pointer-events: none; overflow: hidden; }
+.goo {
+  position: absolute; line-height: 1; transform: translate(-50%, -50%) rotate(var(--r));
+  filter: drop-shadow(2px 3px 0 rgba(0,0,0,.25));
+  animation: gooIn .18s ease-out, gooOut 7s ease-in forwards;
+}
+@keyframes gooIn { from { transform: translate(-50%, -50%) rotate(var(--r)) scale(1.8); } }
+@keyframes gooOut { 0%, 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -30%) rotate(var(--r)) scale(.9); } }
+.wipe-btn {
+  position: fixed; z-index: 57; left: 50%; bottom: calc(18px + var(--kb, 0px)); transform: translateX(-50%);
+  font: 800 16px var(--serif); background: #fff; color: #111; border: 3px solid #111; border-radius: 2px;
+  padding: 8px 18px; box-shadow: 4px 4px 0 #111; cursor: pointer; animation: bubbleIn .15s ease-out;
+}
+.wipe-btn[hidden] { display: none; }
+.wipe-btn:active { transform: translate(calc(-50% + 2px), 2px); box-shadow: 2px 2px 0 #111; }
+.tp-head span { display: block; font-weight: 600; font-size: 11px; color: #555; }
+.tp-rain {
+  display: block; width: 100%; margin-top: 6px; padding: 7px 0; font: 800 15px var(--serif); cursor: pointer;
+  background: #ffd400; color: #111; border: 2.5px solid #111; border-radius: 2px; box-shadow: 2px 2px 0 #111;
+}
+.tp-rain:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 #111; }
+.tp-grid button { touch-action: none; user-select: none; -webkit-user-select: none; }
+.taunt-btn { touch-action: none; user-select: none; -webkit-user-select: none; }
+
+/* ---------- Tự xếp bài trên tay ---------- */
+.sort-tools { font-weight: 600; font-size: 12px; margin-left: 8px; white-space: nowrap; }
+.sort-tools .btn.small { padding: 2px 9px; min-height: 0; font-size: 12px; margin-left: 4px; }
+.hand.tl .card { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.hand.tl .card.moving { z-index: 5; transition: none; box-shadow: 0 0 0 3px #ffd400, 5px 8px 0 rgba(0,0,0,.5); cursor: grabbing; }
+.hand.tl .card + .card.gap-l { margin-left: calc(var(--tw) * -.2) !important; transition: margin .1s; }
+
+/* ---------- Icon vẽ kiểu manga (thay emoji) ---------- */
+.ico { display: inline-block; width: 1.25em; height: 1.25em; vertical-align: -.28em; flex: none; overflow: visible; }
+.goo .ico, .throw-fx .ico, .splat-fx .big .ico { width: 1em; height: 1em; vertical-align: top; }
+.bell .ico { width: 22px; height: 22px; vertical-align: middle; }
+.taunt-btn .ico { width: 20px; height: 20px; vertical-align: middle; }
+.taunt-btn.hot .ico { width: 22px; height: 22px; }
+.chat-btn .ico { width: 24px; height: 24px; vertical-align: middle; }
+.tp-grid button .ico { width: 30px; height: 30px; vertical-align: middle; }
+.tp-grid.emo button .ico { width: 26px; height: 26px; }
+.tp-grid button i .ico { width: 15px; height: 15px; }
+.tp-rain .ico, .wipe-btn .ico { width: 22px; height: 22px; vertical-align: -6px; }
+.chat-quick button .ico { width: 22px; height: 22px; vertical-align: -6px; }
+.msg-text.big .ico, .bubble.emoji .ico { width: 1.5em; height: 1.5em; vertical-align: middle; }
+#toast .ico { width: 22px; height: 22px; vertical-align: -6px; }
+.taunt-btn:hover .ico, .tp-grid button:hover:not(:disabled) .ico, .bell:hover .ico { animation: icoWiggle .35s ease-in-out; }
+@keyframes icoWiggle { 30% { transform: rotate(-12deg) scale(1.1); } 70% { transform: rotate(10deg) scale(1.1); } }
