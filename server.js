@@ -17,6 +17,8 @@ const CHAT_KEEP = 60;          // số tin giữ lại mỗi phòng
 const CHAT_MAX_LEN = 200;
 const CHAT_RATE = { n: 6, ms: 10000 }; // tối đa 6 tin / 10 giây mỗi người
 const RING_COOLDOWN_MS = 5000;         // mỗi người gõ chuông cách nhau ít nhất 5 giây
+const TAUNT_MS = 1200;                // ném đồ/thả emoji: mỗi người cách nhau ít nhất 1,2 giây
+const TAUNTS = ['💩', '🍅', '🥚', '🩴', '💣', '🤡', '😜', '😂', '😡', '👎', '❤️', '👍', '👏', '🔥', '🌹', '🍺'];
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
@@ -202,6 +204,18 @@ io.on('connection', socket => {
     if (now - (p.ringAt || 0) < RING_COOLDOWN_MS) return reply(cb, { error: 'Đợi chút rồi gõ tiếp nha' });
     p.ringAt = now;
     io.to(room.code).emit('ring', { from: p.id, to: actor, name: p.name });
+    reply(cb, { ok: true });
+  });
+
+  socket.on('taunt', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    if (!TAUNTS.includes(d.item)) return reply(cb, { error: 'Không có món này' });
+    const t = room.players.find(x => x.id === d.to);
+    if (!t || t.id === p.id) return reply(cb, { error: 'Chọn người để ném' });
+    const now = Date.now();
+    if (now - (p.tauntAt || 0) < TAUNT_MS) return reply(cb, { error: 'Từ từ, ném chậm thôi' });
+    p.tauntAt = now;
+    io.to(room.code).emit('taunt', { from: p.id, to: t.id, item: d.item, name: p.name });
     reply(cb, { ok: true });
   });
 

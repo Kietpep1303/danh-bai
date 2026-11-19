@@ -58,6 +58,30 @@
       o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + 0.25);
       return;
     }
+    if (kind === 'whoosh' || kind === 'splat' || kind === 'slam' || kind === 'chop') { // tiếng gió, tiếng bẹp, tiếng đập bài
+      const L = { whoosh: 0.35, splat: 0.22, slam: 0.12, chop: 0.4 }[kind];
+      const buf = actx.createBuffer(1, Math.ceil(actx.sampleRate * L), actx.sampleRate), d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) { const x = i / d.length; d[i] = (Math.random() * 2 - 1) * (kind === 'whoosh' ? Math.sin(Math.PI * x) : Math.pow(1 - x, kind === 'chop' ? 2 : 3)); }
+      const src = actx.createBufferSource(); src.buffer = buf;
+      const f = actx.createBiquadFilter(), g = actx.createGain();
+      if (kind === 'whoosh') { f.type = 'bandpass'; f.Q.value = 2; f.frequency.setValueAtTime(400, t); f.frequency.exponentialRampToValueAtTime(2200, t + L); g.gain.value = 0.18; }
+      else { f.type = 'lowpass'; f.frequency.value = kind === 'splat' ? 900 : kind === 'chop' ? 1400 : 700; g.gain.value = kind === 'slam' ? 0.9 : 0.7; }
+      src.connect(f); f.connect(g); g.connect(actx.destination); src.start(t);
+      if (kind === 'slam' || kind === 'chop') { // thêm tiếng "bộp" trầm
+        const o = actx.createOscillator(), og = actx.createGain();
+        o.frequency.setValueAtTime(kind === 'chop' ? 160 : 120, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.18);
+        og.gain.setValueAtTime(kind === 'chop' ? 0.6 : 0.35, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+        o.connect(og); og.connect(actx.destination); o.start(t); o.stop(t + 0.25);
+      }
+      return;
+    }
+    if (kind === 'pop') {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'triangle'; o.frequency.setValueAtTime(520, t); o.frequency.exponentialRampToValueAtTime(1100, t + 0.09);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + 0.2);
+      return;
+    }
     const len = kind === 'shuffle' ? 0.09 : 0.05;
     const buf = actx.createBuffer(1, Math.ceil(actx.sampleRate * len), actx.sampleRate);
     const d = buf.getChannelData(0);
@@ -109,6 +133,7 @@
       sel = new Set([...sel].filter(id => ids.has(id)));
     } else sel.clear();
     offset = st.now - Date.now();
+    trackBeats(S, st);
     S = st; render();
   });
   socket.on('kicked', () => { store.set({ code: null, token: null }); S = null; resetChat(); toast('Bạn đã được mời ra khỏi phòng'); render(); });
@@ -205,6 +230,176 @@
   const isRinging = id => ringing[id] > Date.now();
   const ringFx = id => isRinging(id) ? '<span class="ring-fx" aria-hidden="true">BON BON!</span>' : '';
   const bellBtn = (id, name) => `<button class="bell" data-ring title="Gõ chuông giục ${name}" aria-label="Gõ chuông giục ${name}">🔔</button>`;
+
+  // ---------- Khiêu khích: ném đồ, thả emoji vào ghế người khác ----------
+  // 💩 chỉ ném được vào người mình vừa "ăn" (chặn bài, chặt, thắng tiền). Các món khác ném lúc nào cũng được.
+  const THROW = ['💩', '🍅', '🥚', '🩴', '💣'];
+  const EMOJI = ['🤡', '😜', '😂', '😡', '👎', '❤️', '👍', '👏', '🔥', '🌹', '🍺'];
+  const HARD = new Set(THROW);
+  const POW = { '💩': 'PẸT!', '🍅': 'BẸP!', '🥚': 'BỐP!', '🩴': 'CHÁT!', '💣': 'BÙM!' };
+  const beaten = {}; // pid -> hạn được ném 💩
+  const stains = {}; // pid -> { item, until }: vết dính trên ghế
+  let tauntAt = 0;
+  const canPoop = id => beaten[id] > Date.now();
+  const markBeat = (id, ms = 20000) => { if (id && (!S || id !== S.me)) { beaten[id] = Date.now() + ms; setTimeout(() => S && render(), ms + 50); } };
+  // so state cũ và mới để biết mình vừa ăn ai
+  function trackBeats(prev, st) {
+    const a = prev && prev.round, b = st.round, me = st.me;
+    if (!b) return;
+    if (!a || a.id !== b.id) { for (const k in beaten) delete beaten[k]; }
+    if (b.game === 'tienlen') {
+      const pt = a && a.id === b.id ? a.table : null;
+      if (b.table && b.table.by === me && pt && pt.by !== me && (!pt || pt.cards[0].id !== b.table.cards[0].id)) markBeat(pt.by);
+      if (b.phase === 'done' && b.ranking && (!a || a.phase !== 'done')) {
+        const i = b.ranking.indexOf(me);
+        if (i >= 0) b.ranking.slice(i + 1).forEach(id => markBeat(id, 30000));
+      }
+    } else if (b.phase === 'done' && (!a || a.phase !== 'done' || a.id !== b.id)) {
+      const mine = b.seats.find(x => x.id === me);
+      if (!mine) return;
+      if (b.dealer === me) b.seats.forEach(x => { if (x.result < 0) markBeat(x.id, 30000); });
+      else if (mine.result > 0) markBeat(b.dealer, 30000);
+    }
+  }
+  const tauntBtn = (id, name) => canPoop(id)
+    ? `<button class="taunt-btn hot" data-taunt="${id}" data-item="💩" title="Ném 💩 vào ${name}" aria-label="Ném phân vào ${name}">💩</button>`
+    : `<button class="taunt-btn" data-taunt="${id}" title="Khiêu khích ${name}" aria-label="Khiêu khích ${name}">😈</button>`;
+  const stainFx = id => {
+    const s = stains[id];
+    return s && s.until > Date.now() ? `<span class="stain ${HARD.has(s.item) ? 'hard' : ''}" aria-hidden="true">${s.item}</span>` : '';
+  };
+  const isHit = id => stains[id] && stains[id].until > Date.now() && HARD.has(stains[id].item);
+
+  // bảng chọn món ném, nằm ngoài #app nên không mất khi bàn vẽ lại
+  const pop = document.createElement('div');
+  pop.className = 'taunt-pop'; pop.hidden = true;
+  document.body.appendChild(pop);
+  let popFor = null;
+  function openTaunt(id, btn) {
+    popFor = id;
+    const nm = pname(id);
+    const b = (it, dis) => `<button data-item="${it}" ${dis ? 'disabled title="Phải ăn được người này mới ném được"' : ''}>${it}${dis ? '<i>🔒</i>' : ''}</button>`;
+    pop.innerHTML = `<div class="tp-head">Ném vào <b>${nm}</b></div>
+      <div class="tp-grid">${THROW.map(it => b(it, it === '💩' && !canPoop(id))).join('')}</div>
+      <div class="tp-grid emo">${EMOJI.map(it => b(it)).join('')}</div>
+      ${canPoop(id) ? '' : '<small>💩 mở khi bạn ăn được người này</small>'}`;
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+    const y = r.bottom + 8 + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : r.bottom + 8;
+    pop.style.left = x + 'px'; pop.style.top = y + 'px';
+    pop.querySelectorAll('[data-item]').forEach(e => e.onclick = () => { sendTaunt(id, e.dataset.item); closeTaunt(); });
+  }
+  const closeTaunt = () => { pop.hidden = true; popFor = null; };
+  document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-taunt]')) closeTaunt(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTaunt(); });
+  function sendTaunt(to, item) {
+    unlockAudio();
+    if (Date.now() - tauntAt < 1200) return toast('Từ từ, ném chậm thôi');
+    tauntAt = Date.now();
+    emit('taunt', { to, item });
+  }
+  // vị trí ghế của một người trên màn hình
+  function seatRect(id) {
+    let el = app.querySelector(`[data-pid="${id}"]`);
+    if (!el && id === S.me) el = app.querySelector('.me-head') || app.querySelector('.hand');
+    if (!el) el = app.querySelector('.bar') || app;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+  socket.on('taunt', ({ from, to, item, name }) => {
+    if (!S) return;
+    const a = seatRect(from), b = seatRect(to);
+    const hard = HARD.has(item);
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const land = () => {
+      sfx(hard ? 'splat' : 'pop');
+      if (to === S.me) {
+        if (hard && navigator.vibrate) try { navigator.vibrate(120); } catch {}
+        toast(`${item} ${name} ${hard ? 'ném' : 'thả'} vào bạn!`);
+      }
+      const b2 = seatRect(to);
+      const s = document.createElement('div');
+      s.className = 'splat-fx' + (hard ? ' hard' : '');
+      s.style.left = b2.x + 'px'; s.style.top = b2.y + 'px';
+      s.innerHTML = `<span class="big">${item}</span>${POW[item] ? `<b>${POW[item]}</b>` : ''}${hard ? '<i></i><i></i><i></i><i></i><i></i><i></i>' : ''}`;
+      document.body.appendChild(s);
+      setTimeout(() => s.remove(), 1100);
+      stains[to] = { item, until: Date.now() + (hard ? 3000 : 1800) };
+      render();
+      setTimeout(() => { if (stains[to] && stains[to].until <= Date.now()) { delete stains[to]; render(); } }, hard ? 3050 : 1850);
+    };
+    if (reduce) return land();
+    const p = document.createElement('div');
+    p.className = 'throw-fx'; p.textContent = item;
+    p.style.left = a.x + 'px'; p.style.top = a.y + 'px';
+    document.body.appendChild(p);
+    const dx = b.x - a.x, dy = b.y - a.y, lift = -Math.min(160, 60 + Math.hypot(dx, dy) / 3);
+    const spin = (dx >= 0 ? 1 : -1) * (hard ? 540 : 200);
+    const dur = Math.min(800, 420 + Math.hypot(dx, dy) / 3);
+    sfx('whoosh');
+    p.animate([
+      { transform: 'translate(-50%,-50%) translate(0,0) rotate(0) scale(.6)' },
+      { transform: `translate(-50%,-50%) translate(${dx / 2}px,${dy / 2 + lift}px) rotate(${spin / 2}deg) scale(1.35)`, offset: .5 },
+      { transform: `translate(-50%,-50%) translate(${dx}px,${dy}px) rotate(${spin}deg) scale(1)` },
+    ], { duration: dur, easing: 'cubic-bezier(.3,.1,.4,1)', fill: 'forwards' }).onfinish = () => { p.remove(); land(); };
+  });
+
+  // ---------- Hiệu ứng đánh bài xuống giữa bàn (tiến lên) ----------
+  let lastTableKey, lastLogT = 0;
+  function handRects() {
+    const m = {};
+    app.querySelectorAll('.hand.tl .card[data-id]').forEach(c => { m[c.dataset.id] = c.getBoundingClientRect(); });
+    return m;
+  }
+  function animatePlay(prevHand) {
+    const r = S.round;
+    const logs = S.log || [];
+    const newLogs = logs.filter(l => l.t > lastLogT);
+    if (logs.length) lastLogT = Math.max(lastLogT, logs[logs.length - 1].t);
+    if (!r || r.game !== 'tienlen') { lastTableKey = null; return; }
+    const key = r.table ? `${r.id}:${r.table.by}:${r.table.cards.map(c => c.id).join(',')}` : null;
+    const first = lastTableKey === undefined;
+    if (key === lastTableKey) return;
+    lastTableKey = key;
+    if (first || !key || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const els = [...app.querySelectorAll('.tl-mid .center .cards .card')];
+    const from = r.table.by;
+    const seat = seatRect(from);
+    const chop = newLogs.some(l => /chặt/.test(l.msg));
+    els.forEach((el, i) => {
+      const b = el.getBoundingClientRect();
+      const h = from === S.me && prevHand[el.dataset.id];
+      const ox = h ? h.left + h.width / 2 : seat.x, oy = h ? h.top + h.height / 2 : seat.y;
+      const dx = ox - b.left - b.width / 2, dy = oy - b.top - b.height / 2;
+      const s0 = h ? h.width / b.width : .5;
+      const rot = (i % 2 ? 1 : -1) * (12 + (i * 23) % 18);
+      el.animate([
+        { transform: `translate(${dx}px,${dy}px) rotate(${rot}deg) scale(${s0})`, opacity: h ? 1 : .3 },
+        { transform: `translate(0,-14px) rotate(${-rot / 4}deg) scale(1.22)`, opacity: 1, offset: .7 },
+        { transform: 'translate(0,2px) scale(.94, .9)', offset: .86 },
+        { transform: 'none' },
+      ], { duration: 460, delay: i * 45, easing: 'cubic-bezier(.25,.8,.35,1)', fill: 'backwards' });
+    });
+    const end = 400 + els.length * 45;
+    sfx('slam', end - 60);
+    const mid = app.querySelector('.tl-mid .center');
+    if (mid) setTimeout(() => {
+      mid.animate([{ transform: 'none' }, { transform: chop ? 'translate(-6px,3px) rotate(-1.5deg)' : 'translateY(3px)' },
+        { transform: chop ? 'translate(5px,-2px) rotate(1deg)' : 'none' }, { transform: 'none' }], { duration: chop ? 320 : 160 });
+    }, end - 60);
+    if (chop) {
+      sfx('chop', end - 60);
+      const m = mid ? mid.getBoundingClientRect() : null;
+      const s = document.createElement('div');
+      s.className = 'chop-fx';
+      s.textContent = 'CHẶT!';
+      s.style.left = (m ? m.left + m.width / 2 : innerWidth / 2) + 'px'; s.style.top = (m ? m.top + m.height / 2 : innerHeight / 2) + 'px';
+      s.style.animationDelay = (end - 80) + 'ms';
+      document.body.appendChild(s);
+      setTimeout(() => s.remove(), end + 1100);
+    }
+  }
 
   const isEmoji = t => /^\p{Extended_Pictographic}{1,3}$/u.test(t);
   const bubble = (id, up) => bubbles[id] ? `<div class="bubble ${up ? 'up' : ''} ${isEmoji(bubbles[id].text) ? 'emoji' : ''}">${esc(bubbles[id].text)}</div>` : '';
@@ -361,8 +556,8 @@
     if (r.game === 'xidach' && seat.stood && seat.result == null && !dealer) info = info || 'Đã dằn';
     const timer = isTurn ? `<span class="turn-tools">${S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span>` : ''}${seat.id !== S.me ? bellBtn(seat.id, esc(p.name)) : ''}</span>` : '';
     const canCheck = r.game === 'xidach' && r.phase === 'dealer' && S.me === r.dealer && !dealer && seat.result == null;
-    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''}">
-      ${ringFx(seat.id)}
+    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''} ${isHit(seat.id) ? 'hit' : ''}" data-pid="${seat.id}">
+      ${ringFx(seat.id)}${stainFx(seat.id)}${seat.id !== S.me ? tauntBtn(seat.id, esc(p.name)) : ''}
       <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}</span><span class="seat-pts">${p.points}</span></div>
       ${bubble(seat.id)}
       <div class="mini">${cards}</div>
@@ -382,8 +577,8 @@
   function selfSeat(r, mine) {
     const isTurn = r.turn === S.me && r.phase !== 'done';
     const st = mine.place ? `Về thứ ${mine.place}` : mine.passed ? 'Bỏ lượt' : `${mine.count} lá`;
-    return `<div class="seat self ${isTurn ? 'turn' : ''} ${isRinging(S.me) ? 'ringing' : ''}">
-      ${bubble(S.me, true)}${ringFx(S.me)}
+    return `<div class="seat self ${isTurn ? 'turn' : ''} ${isRinging(S.me) ? 'ringing' : ''} ${isHit(S.me) ? 'hit' : ''}" data-pid="${S.me}">
+      ${bubble(S.me, true)}${ringFx(S.me)}${stainFx(S.me)}
       <div class="seat-top"><span class="seat-name">Bạn</span><span class="seat-pts">${st}</span></div>
       ${isTurn && S.deadline ? `<div class="seat-info"><span>Tới lượt bạn</span><span class="timer" data-dl="${S.deadline}"></span></div>` : ''}
     </div>`;
@@ -459,7 +654,7 @@
       const locked = nan && nan.hidden > 0;
       let infoTxt = locked ? 'Vuốt lá bài để nặn' : mine.info ? esc(mine.info) : '';
       if (r.game === 'tienlen') infoTxt = mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`;
-      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}"><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${ringFx(S.me)}</span>
+      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''} ${isHit(S.me) ? 'hit' : ''}" ${r.game === 'tienlen' ? '' : `data-pid="${S.me}"`}>${r.game === 'tienlen' ? '' : stainFx(S.me)}<span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${ringFx(S.me)}</span>
         <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.points} điểm</span></div>`;
       if (r.game === 'tienlen') {
         hand = `<div class="hand tl">${(mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
@@ -654,6 +849,11 @@
     app.querySelectorAll('.hand.tl .card').forEach(c => c.onclick = () => {
       const id = +c.dataset.id; sel.has(id) ? sel.delete(id) : sel.add(id); render();
     });
+    app.querySelectorAll('[data-taunt]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      if (b.dataset.item) return sendTaunt(b.dataset.taunt, b.dataset.item);
+      popFor === b.dataset.taunt && !pop.hidden ? closeTaunt() : openTaunt(b.dataset.taunt, b);
+    });
     app.querySelectorAll('[data-ring]').forEach(b => b.onclick = () => { unlockAudio(); emit('ring'); });
     const ch = app.querySelector('[data-chat]'); if (ch) ch.onclick = () => setChatOpen(!chatOpen);
     const sh = app.querySelector('[data-sheet]'); if (sh) sh.onclick = () => { sheetOpen = true; render(); };
@@ -673,10 +873,12 @@
     // giữ vị trí cuộn khi vẽ lại
     const felt = app.querySelector('.felt'), sheet = app.querySelector('.sheet');
     const y = felt ? felt.scrollTop : 0, sy = sheet ? sheet.scrollTop : 0;
+    const prevHand = handRects();
     renderRoom();
     const f2 = app.querySelector('.felt'), s2 = app.querySelector('.sheet');
     if (f2) f2.scrollTop = y; if (s2) s2.scrollTop = sy;
     animateDeal();
+    animatePlay(prevHand);
     justRevealed = null;
   }
   render();

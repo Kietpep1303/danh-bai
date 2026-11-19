@@ -37,6 +37,8 @@ Mở http://localhost:3000
 - **Hiệu ứng:** chủ phòng chọn kiểu phát bài (Bay thẳng, Xoay tít, Lật bay, Vòng cung, Búng nhanh hoặc Ngẫu nhiên mỗi ván). Mỗi người tự bật/tắt tiếng lá bài trong bảng Phòng.
 - **Trò chuyện:** bấm 💬 để chat cả phòng, có emoji và câu nói nhanh. Tin nhắn hiện thành bong bóng trên ghế người gửi.
 - **Chuông giục:** bấm 🔔 trên ghế người đang tới lượt để kêu "bon bon" nhắc họ đánh (mỗi người 5 giây gõ một lần).
+- **Khiêu khích:** bấm 😈 ở góc ghế người khác để ném cà chua, trứng thối, dép tổ ong, bom hoặc thả emoji. 💩 chỉ ném được vào người bạn vừa ăn (chặn bài, chặt, về trên họ, thắng tiền); lúc đó nút 💩 nhấp nháy sẵn trên ghế họ.
+- **Đánh bài:** lá đánh ra bay từ tay người đánh xuống giữa bàn, chặt thì hiện chữ "CHẶT!" và rung bàn.
 - **Tiến lên:** bạn luôn ngồi dưới, đánh ngược chiều kim đồng hồ (phải → trên → trái), mũi tên đỏ chỉ người đang tới lượt.
 - **Hết giờ:** mỗi lượt 60 giây (người rớt mạng 15 giây), quá giờ máy tự đi giùm.
 
