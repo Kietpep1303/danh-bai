@@ -13,6 +13,10 @@ const GAMES = {
 const TURN_MS = 60000;        // hết giờ một lượt
 const OFFLINE_TURN_MS = 15000; // người mất kết nối thì chờ ngắn hơn
 const ROOM_IDLE_MS = 30 * 60000;
+const CHAT_KEEP = 60;          // số tin giữ lại mỗi phòng
+const CHAT_MAX_LEN = 200;
+const CHAT_RATE = { n: 6, ms: 10000 }; // tối đa 6 tin / 10 giây mỗi người
+const RING_COOLDOWN_MS = 5000;         // mỗi người gõ chuông cách nhau ít nhất 5 giây
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
@@ -101,6 +105,7 @@ io.on('connection', socket => {
     socket.join(room.code);
     room.touched = Date.now();
     reply(cb, { ok: true, code: room.code, token: p.token });
+    socket.emit('chat:history', room.chat);
     broadcast(room);
   }
 
@@ -108,7 +113,7 @@ io.on('connection', socket => {
     const game = GAMES[d.game] ? d.game : 'xidach';
     const room = {
       code: newCode(), hostId: null, game, bet: 10, dealerMode: 'vote', dealerId: null, dealerRounds: 0, dealFx: 'random',
-      votes: {}, players: [], round: null, log: [], touched: Date.now(), tlWinner: null,
+      votes: {}, players: [], round: null, log: [], chat: [], chatSeq: 0, touched: Date.now(), tlWinner: null,
     };
     const p = { id: rid(), token: rid() + rid(), name: cleanName(d.name), points: 0, connected: true };
     room.players.push(p); room.hostId = p.id;
@@ -168,6 +173,36 @@ io.on('connection', socket => {
     room.touched = Date.now();
     room.lastActor = undefined; // reset đồng hồ sau mỗi thao tác
     reply(cb, { ok: true }); broadcast(room);
+  });
+
+  socket.on('chat', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    const text = String(d.text || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LEN);
+    if (!text) return reply(cb, { error: 'Tin nhắn trống' });
+    const now = Date.now();
+    p.chatTimes = (p.chatTimes || []).filter(t => now - t < CHAT_RATE.ms);
+    if (p.chatTimes.length >= CHAT_RATE.n) return reply(cb, { error: 'Gửi chậm lại chút nha' });
+    p.chatTimes.push(now);
+    const msg = { id: ++room.chatSeq, pid: p.id, name: p.name, text, t: now };
+    room.chat.push(msg);
+    if (room.chat.length > CHAT_KEEP) room.chat.splice(0, room.chat.length - CHAT_KEEP);
+    room.touched = now;
+    io.to(room.code).emit('chat', msg);
+    reply(cb, { ok: true });
+  });
+
+  // Gõ chuông giục người đang tới lượt
+  socket.on('ring', (_, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    const r = room.round;
+    const actor = r && r.phase !== 'done' ? GAMES[r.game].actor(room) : null;
+    if (!actor) return reply(cb, { error: 'Chưa tới lượt ai cả' });
+    if (actor === p.id) return reply(cb, { error: 'Đang tới lượt bạn mà!' });
+    const now = Date.now();
+    if (now - (p.ringAt || 0) < RING_COOLDOWN_MS) return reply(cb, { error: 'Đợi chút rồi gõ tiếp nha' });
+    p.ringAt = now;
+    io.to(room.code).emit('ring', { from: p.id, to: actor, name: p.name });
+    reply(cb, { ok: true });
   });
 
   socket.on('kick', (d = {}, cb) => {

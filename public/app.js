@@ -38,6 +38,26 @@
   function sfx(kind, when = 0) {
     if (!soundOn || !actx || actx.state !== 'running') return;
     const t = actx.currentTime + when / 1000;
+    if (kind === 'bell') { // chuông "bon bon": hai tiếng gõ, mỗi tiếng gồm vài họa âm tắt dần
+      const vol = when === -1 ? 0.5 : 0.22;
+      const strike = t0 => [1, 2.76, 5.4].forEach((m, i) => {
+        const o = actx.createOscillator(), g = actx.createGain();
+        o.type = 'sine'; o.frequency.value = 660 * m;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(vol / (i + 1.2), t0 + 0.006);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + (i ? 0.45 : 1.1));
+        o.connect(g); g.connect(actx.destination); o.start(t0); o.stop(t0 + 1.2);
+      });
+      const t0 = actx.currentTime; strike(t0); strike(t0 + 0.3);
+      return;
+    }
+    if (kind === 'chat') { // tiếng "ting" nhỏ khi có tin nhắn
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.setValueAtTime(880, t); o.frequency.exponentialRampToValueAtTime(1320, t + 0.08);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + 0.25);
+      return;
+    }
     const len = kind === 'shuffle' ? 0.09 : 0.05;
     const buf = actx.createBuffer(1, Math.ceil(actx.sampleRate * len), actx.sampleRate);
     const d = buf.getChannelData(0);
@@ -91,7 +111,103 @@
     offset = st.now - Date.now();
     S = st; render();
   });
-  socket.on('kicked', () => { store.set({ code: null, token: null }); S = null; toast('Bạn đã được mời ra khỏi phòng'); render(); });
+  socket.on('kicked', () => { store.set({ code: null, token: null }); S = null; resetChat(); toast('Bạn đã được mời ra khỏi phòng'); render(); });
+
+  // ---------- Trò chuyện ----------
+  // Khung chat nằm ngoài #app để mỗi lần bàn vẽ lại không làm mất chữ đang gõ.
+  let chatMsgs = [], chatOpen = false, unread = 0;
+  const bubbles = {}; // pid -> { text, until }
+  const QUICK = ['👍', '😂', '😮', '😭', '😡', '🎉', 'Nhanh lên!', 'Bài đẹp quá', 'Chúc may mắn', 'Ván nữa!', 'Thua rồi 😢', 'Hay lắm!'];
+  const chatEl = document.createElement('section');
+  chatEl.className = 'chat'; chatEl.hidden = true;
+  chatEl.setAttribute('aria-label', 'Trò chuyện');
+  chatEl.innerHTML = `
+    <div class="chat-head"><b>Trò chuyện</b><button class="btn small ghost" type="button" data-chat-close>Đóng</button></div>
+    <div class="chat-list" role="log" aria-live="polite"></div>
+    <div class="chat-quick">${QUICK.map(q => `<button type="button">${esc(q)}</button>`).join('')}</div>
+    <form class="chat-form">
+      <input maxlength="200" autocomplete="off" enterkeyhint="send" placeholder="Nhắn gì đó…" aria-label="Tin nhắn">
+      <button class="btn small" type="submit">Gửi</button>
+    </form>`;
+  document.body.appendChild(chatEl);
+  const chatList = chatEl.querySelector('.chat-list');
+  const chatInput = chatEl.querySelector('input');
+  const hhmm = t => new Date(t).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  function msgNode(m, prev) {
+    const mine = S && m.pid === S.me;
+    const el = document.createElement('div');
+    el.className = 'msg' + (mine ? ' mine' : '') + (prev && prev.pid === m.pid && m.t - prev.t < 120000 ? ' cont' : '');
+    if (!mine) { const n = document.createElement('span'); n.className = 'msg-name'; n.textContent = m.name; el.appendChild(n); }
+    const b = document.createElement('div'); b.className = 'msg-text'; b.textContent = m.text; b.title = hhmm(m.t);
+    if (/^\p{Extended_Pictographic}{1,3}$/u.test(m.text)) b.classList.add('big');
+    el.appendChild(b);
+    return el;
+  }
+  function paintChat() {
+    chatList.innerHTML = '';
+    if (!chatMsgs.length) { chatList.innerHTML = '<p class="chat-empty">Chưa có tin nhắn. Chào cả bàn một câu đi!</p>'; return; }
+    chatMsgs.forEach((m, i) => chatList.appendChild(msgNode(m, chatMsgs[i - 1])));
+    chatList.scrollTop = chatList.scrollHeight;
+  }
+  function setChatOpen(v) {
+    chatOpen = v; chatEl.hidden = !v || !S;
+    if (v) { unread = 0; paintChat(); if (matchMedia('(pointer: fine)').matches) chatInput.focus(); }
+    render();
+  }
+  function resetChat() { chatMsgs = []; unread = 0; chatOpen = false; chatEl.hidden = true; for (const k in bubbles) delete bubbles[k]; }
+  async function sendChat(text) {
+    text = text.trim(); if (!text) return;
+    const r = await emit('chat', { text });
+    if (r.ok && text === chatInput.value.trim()) chatInput.value = '';
+  }
+  chatEl.querySelector('form').onsubmit = e => { e.preventDefault(); sendChat(chatInput.value); };
+  chatEl.querySelectorAll('.chat-quick button').forEach(b => b.onclick = () => sendChat(b.textContent));
+  chatEl.querySelector('[data-chat-close]').onclick = () => setChatOpen(false);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && chatOpen) setChatOpen(false); });
+  // bàn phím điện thoại che khung chat: đẩy khung lên theo vùng nhìn thấy
+  if (window.visualViewport) {
+    const fit = () => chatEl.style.setProperty('--kb', Math.max(0, innerHeight - visualViewport.height - visualViewport.offsetTop) + 'px');
+    visualViewport.addEventListener('resize', fit); visualViewport.addEventListener('scroll', fit);
+  }
+  socket.on('chat:history', list => { chatMsgs = Array.isArray(list) ? list : []; unread = 0; if (chatOpen) paintChat(); render(); });
+  socket.on('chat', m => {
+    if (chatMsgs.some(x => x.id === m.id)) return;
+    const prev = chatMsgs[chatMsgs.length - 1];
+    chatMsgs.push(m); if (chatMsgs.length > 100) chatMsgs.shift();
+    if (chatOpen) {
+      const atEnd = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 60;
+      const empty = chatList.querySelector('.chat-empty'); if (empty) empty.remove();
+      chatList.appendChild(msgNode(m, prev));
+      if (atEnd || m.pid === (S && S.me)) chatList.scrollTop = chatList.scrollHeight;
+    }
+    const mine = S && m.pid === S.me;
+    if (!mine) { if (!chatOpen) unread++; sfx('chat'); }
+    bubbles[m.pid] = { text: m.text, until: Date.now() + 5000 };
+    setTimeout(() => { if (bubbles[m.pid] && bubbles[m.pid].until <= Date.now()) { delete bubbles[m.pid]; render(); } }, 5100);
+    // người gửi không có ghế trên bàn (đang ở sảnh chờ hoặc ngồi xem) thì báo bằng toast
+    const onTable = S && S.round && S.round.seats.some(x => x.id === m.pid);
+    if (!mine && !chatOpen && !onTable) toast(`${m.name}: ${m.text}`);
+    render();
+  });
+  // ---------- Chuông giục đánh ----------
+  const ringing = {}; // pid -> thời điểm hết rung
+  socket.on('ring', ({ from, to, name }) => {
+    const forMe = S && to === S.me;
+    sfx('bell', forMe ? -1 : 0); // người bị giục nghe to hơn
+    if (forMe) {
+      if (navigator.vibrate) try { navigator.vibrate([90, 60, 90]); } catch {}
+      toast(`🔔 ${name} đang giục bạn đánh!`);
+    }
+    ringing[to] = Date.now() + 1100;
+    render();
+    setTimeout(() => { if (ringing[to] <= Date.now()) { delete ringing[to]; render(); } }, 1150);
+  });
+  const isRinging = id => ringing[id] > Date.now();
+  const ringFx = id => isRinging(id) ? '<span class="ring-fx" aria-hidden="true">BON BON!</span>' : '';
+  const bellBtn = (id, name) => `<button class="bell" data-ring title="Gõ chuông giục ${name}" aria-label="Gõ chuông giục ${name}">🔔</button>`;
+
+  const isEmoji = t => /^\p{Extended_Pictographic}{1,3}$/u.test(t);
+  const bubble = (id, up) => bubbles[id] ? `<div class="bubble ${up ? 'up' : ''} ${isEmoji(bubbles[id].text) ? 'emoji' : ''}">${esc(bubbles[id].text)}</div>` : '';
   document.addEventListener('visibilitychange', () => { if (!document.hidden && !socket.connected) socket.connect(); });
   setInterval(() => {
     document.querySelectorAll('[data-dl]').forEach(el => {
@@ -220,7 +336,7 @@
     const lv = root.querySelector('[data-leave]');
     if (lv) lv.onclick = () => {
       if (!confirm('Rời phòng?')) return;
-      socket.emit('leave'); store.set({ code: null, token: null }); S = null; sheetOpen = false;
+      socket.emit('leave'); store.set({ code: null, token: null }); S = null; sheetOpen = false; resetChat();
       history.replaceState(null, '', '/'); render();
     };
   }
@@ -243,14 +359,49 @@
       else if (seat.passed) info = 'Bỏ lượt';
     }
     if (r.game === 'xidach' && seat.stood && seat.result == null && !dealer) info = info || 'Đã dằn';
-    const timer = isTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span>` : '';
+    const timer = isTurn ? `<span class="turn-tools">${S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span>` : ''}${seat.id !== S.me ? bellBtn(seat.id, esc(p.name)) : ''}</span>` : '';
     const canCheck = r.game === 'xidach' && r.phase === 'dealer' && S.me === r.dealer && !dealer && seat.result == null;
-    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'}">
+    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''}">
+      ${ringFx(seat.id)}
       <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}</span><span class="seat-pts">${p.points}</span></div>
+      ${bubble(seat.id)}
       <div class="mini">${cards}</div>
       <div class="seat-info"><span>${info}</span>${timer}</div>
       ${canCheck ? `<button class="btn small" data-check="${seat.id}">Xét</button>` : ''}
     </div>`;
+  }
+
+  // ---------- Bàn tiến lên: ngồi vòng quanh bàn theo thứ tự đánh ----------
+  // Mình luôn ngồi dưới; người đánh ngay sau mình ở bên phải, rồi trên, rồi trái
+  // (ngược chiều kim đồng hồ). Mũi tên giữa các ghế chỉ chiều đánh.
+  const TL_POS = { 1: ['bottom'], 2: ['bottom', 'top'], 3: ['bottom', 'right', 'left'], 4: ['bottom', 'right', 'top', 'left'] };
+  const TL_ARROW = {
+    'bottom>right': ['br', -45], 'right>top': ['tr', -135], 'top>left': ['tl', 135], 'left>bottom': ['bl', 45],
+    'right>left': ['top', 180], 'bottom>top': ['right', -90], 'top>bottom': ['left', 90],
+  };
+  function selfSeat(r, mine) {
+    const isTurn = r.turn === S.me && r.phase !== 'done';
+    const st = mine.place ? `Về thứ ${mine.place}` : mine.passed ? 'Bỏ lượt' : `${mine.count} lá`;
+    return `<div class="seat self ${isTurn ? 'turn' : ''} ${isRinging(S.me) ? 'ringing' : ''}">
+      ${bubble(S.me, true)}${ringFx(S.me)}
+      <div class="seat-top"><span class="seat-name">Bạn</span><span class="seat-pts">${st}</span></div>
+      ${isTurn && S.deadline ? `<div class="seat-info"><span>Tới lượt bạn</span><span class="timer" data-dl="${S.deadline}"></span></div>` : ''}
+    </div>`;
+  }
+  function tlTable(r, mine, center) {
+    const n = r.seats.length;
+    const start = mine ? r.seats.indexOf(mine) : 0;
+    const ring = r.seats.map((_, k) => r.seats[(start + k) % n]);
+    const pos = TL_POS[n] || TL_POS[4];
+    let cells = '';
+    ring.forEach((seat, k) => {
+      cells += `<div class="tl-pos" style="grid-area:${pos[k]}">${k === 0 && mine ? selfSeat(r, mine) : seatHTML(seat, r)}</div>`;
+      const a = n > 1 && TL_ARROW[pos[k] + '>' + pos[(k + 1) % n]];
+      const live = r.turn === seat.id && r.phase !== 'done';
+      if (a) cells += `<div class="tl-arrow ${live ? 'on' : ''}" style="grid-area:${a[0]}" aria-hidden="true"><span style="transform:rotate(${a[1]}deg)">➜</span></div>`;
+    });
+    return `<div class="tl-table n${n}">${cells}<div class="tl-mid">${center}</div></div>
+      <p class="tl-dir"><span aria-hidden="true">↺</span> Đánh ngược chiều kim đồng hồ, theo mũi tên</p>`;
   }
 
   // ---------- Bàn chơi ----------
@@ -292,8 +443,8 @@
       body = `<div class="panel-wrap">${panelHTML()}</div>`;
     } else {
       body = `
-        <div class="seats ${others.length > 7 ? 'many' : ''}">${others.map(s => seatHTML(s, r)).join('')}</div>
-        ${center}
+        ${r.game === 'tienlen' ? tlTable(r, mine, center)
+          : `<div class="seats ${others.length > 7 ? 'many' : ''}">${others.map(s => seatHTML(s, r)).join('')}</div>`}
         <div class="status">${statusText(r, mine)}${r.phase === 'done' && !canStart ? '<small>Đợi chủ phòng hoặc nhà cái chia ván mới</small>' : ''}</div>
         <div class="feed">${S.log.slice(-3).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div>`;
     }
@@ -308,7 +459,7 @@
       const locked = nan && nan.hidden > 0;
       let infoTxt = locked ? 'Vuốt lá bài để nặn' : mine.info ? esc(mine.info) : '';
       if (r.game === 'tienlen') infoTxt = mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`;
-      head = `<div class="me-head"><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}</span>
+      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}"><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${ringFx(S.me)}</span>
         <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.points} điểm</span></div>`;
       if (r.game === 'tienlen') {
         hand = `<div class="hand tl">${(mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
@@ -343,6 +494,7 @@
         <header class="bar">
           <button class="code-chip" data-share aria-label="Chia sẻ mã phòng">${S.code}</button>
           <div class="bar-title"><b>${g.name}</b>Cược ${S.bet}${g.dealer && S.dealerId ? `, cái: ${pname(S.dealerId)}` : ''}</div>
+          <button class="btn small ghost chat-btn ${chatOpen ? 'on' : ''}" data-chat aria-label="Trò chuyện${unread ? `, ${unread} tin chưa đọc` : ''}">💬${unread ? `<span class="unread">${unread > 9 ? '9+' : unread}</span>` : ''}</button>
           ${r ? '<button class="btn small ghost" data-sheet>Phòng</button>' : ''}
         </header>
         <section class="felt"><div class="room-inner" style="display:flex;flex-direction:column;gap:12px">${body}</div></section>
@@ -502,6 +654,8 @@
     app.querySelectorAll('.hand.tl .card').forEach(c => c.onclick = () => {
       const id = +c.dataset.id; sel.has(id) ? sel.delete(id) : sel.add(id); render();
     });
+    app.querySelectorAll('[data-ring]').forEach(b => b.onclick = () => { unlockAudio(); emit('ring'); });
+    const ch = app.querySelector('[data-chat]'); if (ch) ch.onclick = () => setChatOpen(!chatOpen);
     const sh = app.querySelector('[data-sheet]'); if (sh) sh.onclick = () => { sheetOpen = true; render(); };
     app.querySelectorAll('[data-close]').forEach(el => el.onclick = e => { if (e.target === el) { sheetOpen = false; render(); } });
     const share = app.querySelector('[data-share]');
@@ -513,7 +667,8 @@
   }
 
   function render() {
-    if (!S) { if (!app.querySelector('.home')) renderHome(); return; }
+    if (!S) { chatEl.hidden = true; if (!app.querySelector('.home')) renderHome(); return; }
+    chatEl.hidden = !chatOpen;
     if (dragging) { pendingRender = true; return; } // đang nặn thì đợi vuốt xong mới vẽ lại
     // giữ vị trí cuộn khi vẽ lại
     const felt = app.querySelector('.felt'), sheet = app.querySelector('.sheet');
