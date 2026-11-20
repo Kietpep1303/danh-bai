@@ -9,6 +9,7 @@ const GAMES = {
   xidach: require('./games/xidach'),
   baicao: require('./games/baicao'),
   tienlen: require('./games/tienlen'),
+  poker: require('./games/poker'),
 };
 const TURN_MS = 60000;        // hết giờ một lượt
 const OFFLINE_TURN_MS = 15000; // người mất kết nối thì chờ ngắn hơn
@@ -21,7 +22,7 @@ const TAUNT_RATE = { n: 30, ms: 3000 }; // ném đồ/thả emoji: tối đa 30 
 const TAUNTS = ['💩', '🍅', '🥚', '🩴', '💣', '🤡', '😜', '😂', '😡', '👎', '❤️', '👍', '👏', '🔥', '🌹', '🍺'];
 
 const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: res => res.setHeader('Cache-Control', 'no-cache') }));
 app.get('/health', (_, res) => res.send('ok'));
 const server = http.createServer(app);
 const io = new Server(server, { pingTimeout: 30000, pingInterval: 10000 });
@@ -45,7 +46,8 @@ function viewFor(room, pid) {
     code: room.code, me: pid, hostId: room.hostId,
     game: room.game, bet: room.bet, dealerMode: room.dealerMode, dealerId: room.dealerId, dealFx: room.dealFx,
     dealerRounds: room.dealerRounds, myVote: room.votes[pid] || null, tally,
-    players: room.players.map(p => ({ id: p.id, name: p.name, points: p.points, connected: p.connected })),
+    players: room.players.map(p => ({ id: p.id, name: p.name, points: p.points, connected: p.connected, chips: p.chips == null ? room.pkStack : p.chips, sitOut: !!p.sitOut })),
+    pkStack: room.pkStack, debts: room.debts.filter(x => x.amount > 0),
     round: r ? { ...GAMES[r.game].view(room, pid), id: r.id } : null,
     deadline: actor ? room.turnAt + (isOnline(room, actor) ? TURN_MS : OFFLINE_TURN_MS) : null,
     log: room.log.slice(-12), now: Date.now(),
@@ -85,7 +87,7 @@ function chooseDealer(room, order) {
 
 function startRound(room) {
   const G = GAMES[room.game];
-  const order = room.players.filter(p => p.connected).slice(0, G.max).map(p => p.id);
+  const order = room.players.filter(p => p.connected && !p.sitOut && (!G.eligible || G.eligible(room, p))).slice(0, G.max).map(p => p.id);
   if (order.length < G.min) return `Cần ít nhất ${G.min} người đang online`;
   if (G.usesDealer) chooseDealer(room, order);
   room.round = G.start(room, order, room.dealerId);
@@ -101,7 +103,8 @@ io.on('connection', socket => {
     const p = room && room.players.find(x => x.id === socket.data.pid);
     return p ? { room, p } : {};
   };
-  function attach(room, p, cb) {
+  function attach(room, p, cb, tab) {
+    if (tab) p.tab = String(tab).slice(0, 40);
     p.socketId = socket.id; p.connected = true; p.offAt = null;
     socket.data.code = room.code; socket.data.pid = p.id;
     socket.join(room.code);
@@ -114,14 +117,14 @@ io.on('connection', socket => {
   socket.on('create', (d = {}, cb) => {
     const game = GAMES[d.game] ? d.game : 'xidach';
     const room = {
-      code: newCode(), hostId: null, game, bet: 10, dealerMode: 'vote', dealerId: null, dealerRounds: 0, dealFx: 'random',
+      code: newCode(), hostId: null, game, bet: 10, dealerMode: 'vote', dealerId: null, dealerRounds: 0, dealFx: 'random', pkStack: 1000, debts: [], asks: [], askSeq: 0,
       votes: {}, players: [], round: null, log: [], chat: [], chatSeq: 0, touched: Date.now(), tlWinner: null,
     };
     const p = { id: rid(), token: rid() + rid(), name: cleanName(d.name), points: 0, connected: true };
     room.players.push(p); room.hostId = p.id;
     rooms.set(room.code, room);
     log(room, `${p.name} tạo phòng`);
-    attach(room, p, cb);
+    attach(room, p, cb, d.tab);
   });
 
   socket.on('join', (d = {}, cb) => {
@@ -129,14 +132,21 @@ io.on('connection', socket => {
     if (!room) return reply(cb, { error: 'Không tìm thấy phòng này. Kiểm tra lại mã.' });
     let p = d.token && room.players.find(x => x.token === d.token);
     if (p) {
-      if (d.name) p.name = cleanName(d.name);
-      return attach(room, p, cb);
+      // cùng một người nhưng đang mở ở tab/máy khác còn kết nối: không cho tab mới chiếm chỗ,
+      // để người đó vào như một người chơi mới (hay gặp khi mở 2 tab trên cùng trình duyệt)
+      const live = p.socketId && p.socketId !== socket.id && io.sockets.sockets.get(p.socketId);
+      if (live && d.tab && p.tab && d.tab !== p.tab) {
+        if (!d.name) return reply(cb, { error: 'Phòng này đang mở ở tab khác. Nhập tên để vào như một người chơi khác.', taken: true });
+      } else {
+        if (d.name) p.name = cleanName(d.name);
+        return attach(room, p, cb, d.tab);
+      }
     }
     if (room.players.length >= 20) return reply(cb, { error: 'Phòng đã đầy (20 người)' });
     p = { id: rid(), token: rid() + rid(), name: cleanName(d.name), points: 0, connected: true };
     room.players.push(p);
     log(room, `${p.name} vào phòng`);
-    attach(room, p, cb);
+    attach(room, p, cb, d.tab);
   });
 
   socket.on('settings', (d = {}, cb) => {
@@ -146,6 +156,7 @@ io.on('connection', socket => {
     if (d.game && GAMES[d.game] && d.game !== room.game) { room.game = d.game; room.round = null; log(room, `Đổi sang ${GAMES[d.game].title}`); }
     if (d.bet) room.bet = Math.max(1, Math.min(100000, Math.floor(Number(d.bet)) || 10));
     if (['random', 'fly', 'spin', 'flip', 'arc', 'snap'].includes(d.dealFx)) room.dealFx = d.dealFx;
+    if ([500, 1000, 2000, 5000].includes(d.pkStack)) room.pkStack = d.pkStack;
     if (d.dealerMode === 'vote' || d.dealerMode === 'random3') {
       if (d.dealerMode !== room.dealerMode) { room.dealerMode = d.dealerMode; room.dealerRounds = 3; }
     }
@@ -162,7 +173,7 @@ io.on('connection', socket => {
   socket.on('start', (_, cb) => {
     const { room, p } = ctx(); if (!room) return;
     if (room.round && room.round.phase !== 'done') return reply(cb, { error: 'Ván đang chơi' });
-    if (p.id !== room.hostId && p.id !== room.dealerId) return reply(cb, { error: 'Chủ phòng hoặc nhà cái mới chia bài được' });
+    if (room.game !== 'poker' && p.id !== room.hostId && p.id !== room.dealerId) return reply(cb, { error: 'Chủ phòng hoặc nhà cái mới chia bài được' });
     const err = startRound(room);
     if (err) return reply(cb, { error: err });
     reply(cb, { ok: true }); broadcast(room);
@@ -205,6 +216,102 @@ io.on('connection', socket => {
     p.ringAt = now;
     io.to(room.code).emit('ring', { from: p.id, to: actor, name: p.name });
     reply(cb, { ok: true });
+  });
+
+  // ---------- Xin / vay chip, chủ nợ sai vặt con nợ ----------
+  // đang có bài trong ván poker chưa xong thì chip đang nằm trên bàn, không cho chuyển
+  const inHand = (room, id) => room.round && room.round.game === 'poker' && room.round.phase !== 'done' && room.round.order.includes(id);
+  const chipsOf = (room, p) => (p.chips == null ? room.pkStack : p.chips);
+  socket.on('loan:ask', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    const t = room.players.find(x => x.id === d.to);
+    const amount = Math.floor(Number(d.amount));
+    const kind = d.kind === 'gift' ? 'gift' : 'loan';
+    if (!t || t.id === p.id) return reply(cb, { error: 'Chọn người để ' + (kind === 'gift' ? 'xin' : 'vay') });
+    if (!(amount >= 1 && amount <= 100000)) return reply(cb, { error: 'Số chip không hợp lệ' });
+    if (chipsOf(room, t) < amount) return reply(cb, { error: `${t.name} không đủ ${amount} chip` });
+    const now = Date.now();
+    if (room.asks.some(a => a.from === p.id && now - a.t < 15000)) return reply(cb, { error: 'Đợi người ta trả lời đã' });
+    room.asks = room.asks.filter(a => now - a.t < 60000 && a.from !== p.id);
+    const ask = { id: ++room.askSeq, from: p.id, to: t.id, amount, kind, repay: kind === 'loan' ? Math.ceil(amount * 11 / 10) : 0, t: now };
+    room.asks.push(ask);
+    if (t.socketId) io.to(t.socketId).emit('loan:ask', { ...ask, name: p.name });
+    log(room, `${p.name} ${kind === 'gift' ? 'xin' : 'hỏi vay'} ${t.name} ${amount} chip`);
+    reply(cb, { ok: true }); broadcast(room);
+  });
+  socket.on('loan:reply', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    const ask = room.asks.find(a => a.id === d.id && a.to === p.id);
+    if (!ask) return reply(cb, { error: 'Lời xin này hết hạn rồi' });
+    const asker = room.players.find(x => x.id === ask.from);
+    if (!asker) { room.asks = room.asks.filter(a => a !== ask); return reply(cb, { error: 'Người xin đã rời phòng' }); }
+    const word = ask.kind === 'gift' ? 'cho xin' : 'cho vay';
+    const tell = msg => { if (asker.socketId) io.to(asker.socketId).emit('loan:result', { msg }); };
+    if (!d.ok) {
+      room.asks = room.asks.filter(a => a !== ask);
+      log(room, `${p.name} không ${word} ${asker.name}`);
+      tell(`${p.name} không ${word}`);
+      reply(cb, { ok: true }); return broadcast(room);
+    }
+    if (inHand(room, p.id) || inHand(room, asker.id)) return reply(cb, { error: 'Đợi hết ván poker rồi mới chuyển chip được' });
+    if (chipsOf(room, p) < ask.amount) return reply(cb, { error: 'Bạn không đủ chip' });
+    room.asks = room.asks.filter(a => a !== ask);
+    p.chips = chipsOf(room, p) - ask.amount;
+    asker.chips = chipsOf(room, asker) + ask.amount;
+    if (ask.kind === 'loan') {
+      const debt = room.debts.find(x => x.lender === p.id && x.debtor === asker.id);
+      if (debt) debt.amount += ask.repay; else room.debts.push({ lender: p.id, debtor: asker.id, amount: ask.repay });
+      log(room, `${p.name} cho ${asker.name} vay ${ask.amount} chip, phải trả ${ask.repay}`);
+      tell(`${p.name} cho bạn vay ${ask.amount} chip (phải trả ${ask.repay}). Giờ bạn là con nợ!`);
+    } else {
+      log(room, `${p.name} cho ${asker.name} ${ask.amount} chip`);
+      tell(`${p.name} cho bạn ${ask.amount} chip`);
+    }
+    reply(cb, { ok: true }); broadcast(room);
+  });
+  socket.on('loan:repay', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    const debt = room.debts.find(x => x.debtor === p.id && x.lender === d.lender && x.amount > 0);
+    if (!debt) return reply(cb, { error: 'Bạn không nợ người này' });
+    if (inHand(room, p.id)) return reply(cb, { error: 'Đợi hết ván rồi trả' });
+    const pay = Math.min(debt.amount, chipsOf(room, p));
+    if (pay <= 0) return reply(cb, { error: 'Bạn hết chip rồi, lấy gì trả' });
+    const lender = room.players.find(x => x.id === debt.lender);
+    if (lender && inHand(room, lender.id)) return reply(cb, { error: 'Chủ nợ đang chơi dở ván, đợi hết ván rồi trả' });
+    p.chips = chipsOf(room, p) - pay;
+    if (lender) lender.chips = chipsOf(room, lender) + pay;
+    debt.amount -= pay;
+    log(room, `${p.name} trả nợ ${lender ? lender.name : '?'} ${pay} chip${debt.amount ? `, còn nợ ${debt.amount}` : ', hết nợ!'}`);
+    room.debts = room.debts.filter(x => x.amount > 0);
+    reply(cb, { ok: true }); broadcast(room);
+  });
+  socket.on('loan:forgive', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    const debt = room.debts.find(x => x.lender === p.id && x.debtor === d.debtor);
+    if (!debt) return reply(cb, { error: 'Người này không nợ bạn' });
+    room.debts = room.debts.filter(x => x !== debt);
+    log(room, `${p.name} xóa nợ cho ${(room.players.find(x => x.id === d.debtor) || {}).name || '?'}`);
+    reply(cb, { ok: true }); broadcast(room);
+  });
+  // chủ nợ sai vặt con nợ (chỉ là hiệu ứng vui trên bàn)
+  const ORDERS = ['quat', 'tra', 'dam', 'hat', 'cui', 'xinloi'];
+  socket.on('order', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    if (!ORDERS.includes(d.kind)) return reply(cb, { error: 'Không có việc này' });
+    const debt = room.debts.find(x => x.lender === p.id && x.debtor === d.to && x.amount > 0);
+    if (!debt) return reply(cb, { error: 'Người này không nợ bạn, không sai được' });
+    const now = Date.now();
+    if (now - (p.orderAt || 0) < 2500) return reply(cb, { error: 'Từ từ, để con nợ làm xong đã' });
+    p.orderAt = now;
+    io.to(room.code).emit('order', { from: p.id, to: d.to, kind: d.kind });
+    reply(cb, { ok: true });
+  });
+
+  socket.on('sitout', (d = {}, cb) => {
+    const { room, p } = ctx(); if (!room) return;
+    p.sitOut = !!d.on;
+    log(room, `${p.name} ${p.sitOut ? 'nghỉ, không chơi ván sau' : 'vào chơi lại'}`);
+    reply(cb, { ok: true }); broadcast(room);
   });
 
   socket.on('taunt', (d = {}, cb) => {

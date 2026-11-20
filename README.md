@@ -1,6 +1,6 @@
 # Bàn Bài
 
-Web chơi xì dách, bài cào và tiến lên với bạn bè bằng mã phòng. Chạy tốt trên điện thoại.
+Web chơi xì dách, bài cào, tiến lên và poker với bạn bè bằng mã phòng. Chạy tốt trên điện thoại.
 
 ## Đưa lên mạng (miễn phí, khoảng 10 phút, nên làm trên máy tính)
 
@@ -33,6 +33,8 @@ Mở http://localhost:3000
 - **Xì dách (2–8 người):** dưới 16 phải rút, tối đa 5 lá. Xì bàn ăn 3 lần cược, xì dách và ngũ linh ăn 2 lần. Nhà cái cần 15 điểm mới được xét, xét từng người hoặc xét hết. Hai bên cùng quắc thì hòa.
 - **Bài cào (2–17 người):** 3 lá, tính số nút hàng đơn vị. Ba tây lớn nhất, ăn 2 lần cược. Bằng nút thì hòa.
 - **Tiến lên miền Nam (2–4 người):** ván đầu ai giữ lá nhỏ nhất (thường là 3 bích) đi trước và phải đánh lá đó. Ván sau người về nhất đi trước. 3 đôi thông chặt heo; tứ quý chặt heo, đôi heo, 3 đôi thông; 4 đôi thông chặt tất cả. Chặt heo đen ăn 1 lần cược, heo đỏ 2 lần. Tới trắng: sảnh rồng, tứ quý heo, 6 đôi, 5 đôi thông. Cuối ván: 4 người được +3, +1, −1, −3 lần cược (3 người: +2, 0, −2).
+- **Poker Texas Hold'em (2–9 người), kiểu sòng thật (No-Limit):** mỗi người có chip riêng, chủ phòng chọn chip ban đầu (500/1000/2000/5000). Mù nhỏ bằng nửa mức cược, mù lớn bằng mức cược. Tố bao nhiêu cũng được (ít nhất bằng lần tố trước), có Tất tay và hũ phụ. Nút D xoay vòng, lượt đi theo chiều kim đồng hồ. Thứ tự bộ: Mậu thầu < Đôi < Thú < Sám cô < Sảnh < Thùng < Cù lũ < Tứ quý < Thùng phá sảnh. Hết giờ thì máy tự xem hoặc bỏ bài.
+- **Hết chip:** ngồi xem, không được chia bài. Muốn chơi tiếp thì bấm Xin chip (cho luôn) hoặc Vay chip (trả thêm 10% lãi) và chọn người. Con nợ thắng ván thì tự trừ nợ; cũng có thể bấm Trả nợ giữa các ván. Chủ nợ được ném 💩 con nợ lúc nào cũng được và có mục Sai con nợ trong bảng 😈 (quạt, bưng trà, đấm lưng, hát, cúi chào, xin lỗi), hoặc Xóa nợ.
 - **Nhà cái:** chủ phòng chọn "Bầu chọn" (giữ cái đến khi người khác được nhiều phiếu hơn) hoặc "Ngẫu nhiên 3 ván".
 - **Hiệu ứng:** chủ phòng chọn kiểu phát bài (Bay thẳng, Xoay tít, Lật bay, Vòng cung, Búng nhanh hoặc Ngẫu nhiên mỗi ván). Mỗi người tự bật/tắt tiếng lá bài trong bảng Phòng.
 - **Trò chuyện:** bấm 💬 để chat cả phòng, có emoji và câu nói nhanh. Tin nhắn hiện thành bong bóng trên ghế người gửi.

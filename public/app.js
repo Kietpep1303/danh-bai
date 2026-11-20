@@ -8,6 +8,7 @@
     xidach: { name: 'Xì dách', max: 8, dealer: true },
     baicao: { name: 'Bài cào', max: 17, dealer: true },
     tienlen: { name: 'Tiến lên', max: 4, dealer: false },
+    poker: { name: 'Poker', max: 9, dealer: false },
   };
   let S = null;           // trạng thái phòng từ server
   let sel = new Set();    // lá đang chọn (tiến lên)
@@ -95,6 +96,13 @@
   }
   let offset = 0;         // lệch đồng hồ với server
 
+  // Mỗi tab có mã riêng; vé vào phòng lưu theo tab (sessionStorage) để 2 tab cùng trình duyệt là 2 người khác nhau.
+  const TAB = (() => { try { let t = sessionStorage.getItem('banbai-tab'); if (!t) { t = Math.random().toString(36).slice(2, 12); sessionStorage.setItem('banbai-tab', t); } return t; } catch { return Math.random().toString(36).slice(2, 12); } })();
+  const tabTicket = {
+    get() { try { return JSON.parse(sessionStorage.getItem('banbai-ticket') || '{}'); } catch { return {}; } },
+    set(v) { try { sessionStorage.setItem('banbai-ticket', JSON.stringify(v)); } catch {} },
+  };
+  const ticket = () => { const t = tabTicket.get(); if (t.code && t.token) return t; const s = store.get(); return { code: s.code, token: s.token }; };
   const store = {
     get() { try { return JSON.parse(localStorage.getItem('banbai') || '{}'); } catch { return {}; } },
     set(v) { try { localStorage.setItem('banbai', JSON.stringify({ ...store.get(), ...v })); } catch {} },
@@ -120,10 +128,14 @@
 
   // ---------- Kết nối ----------
   socket.on('connect', () => {
-    const s = store.get();
+    const s = ticket();
     const url = new URL(location.href).searchParams.get('r');
     if (s.code && s.token && (!url || url.toUpperCase() === s.code)) {
-      emit('join', { code: s.code, token: s.token }).then(r => { if (!r.ok) { store.set({ code: null, token: null }); S = null; render(); } });
+      emit('join', { code: s.code, token: s.token, tab: TAB }).then(r => {
+        if (r.ok) return;
+        if (!r.taken) { store.set({ code: null, token: null }); tabTicket.set({}); }
+        S = null; render();
+      });
     } else render();
   });
   socket.on('disconnect', () => render());
@@ -137,7 +149,7 @@
     trackBeats(S, st);
     S = st; render();
   });
-  socket.on('kicked', () => { store.set({ code: null, token: null }); S = null; resetChat(); toast('Bạn đã được mời ra khỏi phòng'); render(); });
+  socket.on('kicked', () => { store.set({ code: null, token: null }); tabTicket.set({}); S = null; resetChat(); toast('Bạn đã được mời ra khỏi phòng'); render(); });
 
   // ---------- Trò chuyện ----------
   // Khung chat nằm ngoài #app để mỗi lần bàn vẽ lại không làm mất chữ đang gõ.
@@ -239,7 +251,7 @@
   const HARD = new Set(THROW);
   const POW = { '💩': 'PẸT!', '🍅': 'BẸP!', '🥚': 'BỐP!', '🩴': 'CHÁT!', '💣': 'BÙM!' };
   const beaten = {}; // pid -> hạn được ném 💩
-  const canPoop = id => beaten[id] > Date.now();
+  const canPoop = id => beaten[id] > Date.now() || isMyDebtor(id);
   const markBeat = (id, ms = 20000) => { if (id && (!S || id !== S.me)) { beaten[id] = Date.now() + ms; setTimeout(() => S && render(), ms + 50); } };
   // so state cũ và mới để biết mình vừa ăn ai
   function trackBeats(prev, st) {
@@ -256,6 +268,7 @@
     } else if (b.phase === 'done' && (!a || a.phase !== 'done' || a.id !== b.id)) {
       const mine = b.seats.find(x => x.id === me);
       if (!mine) return;
+      if (b.game === 'poker') { if (mine.net > 0) b.seats.forEach(x => { if (x.net < 0) markBeat(x.id, 30000); }); return; }
       if (b.dealer === me) b.seats.forEach(x => { if (x.result < 0) markBeat(x.id, 30000); });
       else if (mine.result > 0) markBeat(b.dealer, 30000);
     }
@@ -294,7 +307,8 @@
       <div class="tp-grid">${THROW.map(it => b(it, it === '💩' && !ok)).join('')}</div>
       <button class="tp-rain" data-rain="${rainItem}">${ico('🌧')} Mưa ${ico(rainItem)} ×24</button>
       <div class="tp-grid emo">${EMOJI.map(it => b(it)).join('')}</div>
-      ${ok ? '' : `<small>${ico('💩')} mở khi bạn ăn được người này</small>`}`;
+      ${ok ? '' : `<small>${ico('💩')} mở khi bạn ăn được hoặc cho người này vay</small>`}
+      ${ordersHTML(id)}`;
     pop.hidden = false;
     const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
     const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
@@ -302,6 +316,9 @@
     pop.style.left = x + 'px'; pop.style.top = y + 'px';
     pop.querySelectorAll('[data-item]:not(:disabled)').forEach(e => holdToSpam(e, id, e.dataset.item));
     pop.querySelector('[data-rain]').onclick = e => { e.stopPropagation(); unlockAudio(); rain(id, e.currentTarget.dataset.rain); };
+    pop.querySelectorAll('[data-order]').forEach(b => b.onclick = e => { e.stopPropagation(); unlockAudio(); emit('order', { to: id, kind: b.dataset.order }); });
+    const fg = pop.querySelector('[data-forgive]');
+    if (fg) fg.onclick = e => { e.stopPropagation(); emit('loan:forgive', { debtor: id }); closeTaunt(); };
   }
   const closeTaunt = () => { pop.hidden = true; popFor = null; stopSpam(); };
   document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-taunt]')) closeTaunt(); });
@@ -395,6 +412,108 @@
       { transform: `translate(-50%,-50%) translate(${dx / 2}px,${dy / 2 + lift}px) rotate(${spin / 2}deg) scale(1.35)`, offset: .5 },
       { transform: `translate(-50%,-50%) translate(${dx}px,${dy}px) rotate(${spin}deg) scale(1)` },
     ], { duration: dur, easing: 'cubic-bezier(.3,.1,.4,1)', fill: 'forwards' }).onfinish = () => { p.remove(); land(); };
+  });
+
+  // ---------- Chip poker: xin, vay, trả nợ; chủ nợ sai vặt con nợ ----------
+  const chipsOf = id => { const p = S && S.players.find(x => x.id === id); return p ? p.chips : 0; };
+  const debtOf = (lender, debtor) => (S && S.debts || []).find(x => x.lender === lender && x.debtor === debtor);
+  const myDebts = () => (S && S.debts || []).filter(x => x.debtor === S.me);
+  const isMyDebtor = id => !!debtOf(S.me, id);
+  const chipTxt = n => `<span class="chips-n">${ico('💰')}${n}</span>`;
+  // nhãn chủ nợ / con nợ cạnh tên
+  function debtBadges(id) {
+    const ds = S.debts || [];
+    let h = '';
+    if (ds.some(x => x.debtor === id)) h += ` <span class="badge debtor" title="Đang nợ: ${ds.filter(x => x.debtor === id).map(x => `${pname(x.lender)} ${x.amount}`).join(', ')}">${ico('⛓')}Con nợ</span>`;
+    if (ds.some(x => x.lender === id)) h += ` <span class="badge lender" title="Chủ nợ">${ico('💰')}Chủ nợ</span>`;
+    return h;
+  }
+  const inMyHand = () => { const r = S.round; return r && r.game === 'poker' && r.phase !== 'done' && r.seats.some(x => x.id === S.me); };
+  // hàng nút xin / vay / trả nợ dưới bàn (chỉ ở poker)
+  function loanRow() {
+    if (S.game !== 'poker' || inMyHand()) return '';
+    const mine = chipsOf(S.me), debts = myDebts(), r = S.round;
+    const me = S.players.find(p => p.id === S.me) || {};
+    const seat = r && r.seats.find(x => x.id === S.me);
+    let h = '';
+    if (mine <= 0) h += `<span class="broke">${ico('😭')} Hết chip, đang ngồi xem</span>`;
+    // hết ván: ai còn giữ bài úp (thắng không ai theo, hoặc đã bỏ bài) được lật cho cả bàn xem
+    if (seat && r.phase === 'done' && !seat.shown) h += '<button class="btn small ghost" data-showcards>Lật bài cho xem</button>';
+    if (mine < (S.pkStack || 1000) / 2) h += `<button class="btn small ghost" data-loan="gift">${ico('🙏')} Xin chip</button><button class="btn small ghost" data-loan="loan">${ico('💰')} Vay chip</button>`;
+    if (mine > 0) h += `<button class="btn small ghost ${me.sitOut ? 'on' : ''}" data-sitout="${me.sitOut ? 0 : 1}">${me.sitOut ? 'Vào chơi lại' : 'Nghỉ ván sau'}</button>`;
+    debts.forEach(d => { h += `<button class="btn small" data-repay="${d.lender}" ${mine > 0 ? '' : 'disabled'}>Trả nợ ${pname(d.lender)} (${d.amount})</button>`; });
+    return `<div class="loan-row">${h}</div>`;
+  }
+  // bảng chọn người và số chip để xin / vay
+  function openLoan(kind, btn) {
+    const others = S.players.filter(p => p.id !== S.me && p.chips > 0);
+    const amounts = [100, 200, 500, S.pkStack || 1000];
+    pop.innerHTML = `<div class="tp-head">${kind === 'gift' ? 'Xin chip ai?' : 'Vay chip ai?'} <span>${kind === 'gift' ? 'xin thì không phải trả' : 'vay phải trả thêm 10% lãi, thắng ván là tự trừ nợ'}</span></div>
+      ${others.length ? others.map(p => `<div class="loan-p"><b>${esc(p.name)}</b> ${chipTxt(p.chips)}
+        <div class="loan-amts">${amounts.map(a => `<button data-to="${p.id}" data-amt="${a}" ${p.chips < a ? 'disabled' : ''}>${a}</button>`).join('')}</div></div>`).join('')
+        : '<small>Không ai còn chip để cho</small>'}`;
+    pop.hidden = false; popFor = null;
+    const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+    pop.style.top = Math.max(8, r.top - h - 8) + 'px';
+    pop.querySelectorAll('[data-amt]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      emit('loan:ask', { to: b.dataset.to, amount: +b.dataset.amt, kind }).then(x => { if (x.ok) toast(`Đã gửi lời ${kind === 'gift' ? 'xin' : 'hỏi vay'}, đợi người ta trả lời`); });
+      closeTaunt();
+    });
+  }
+  // người khác xin / hỏi vay mình: hiện hộp hỏi
+  const askBox = document.createElement('div');
+  askBox.className = 'ask-box'; askBox.hidden = true;
+  document.body.appendChild(askBox);
+  let askQueue = [];
+  function showAsk() {
+    const a = askQueue[0];
+    if (!a) { askBox.hidden = true; return; }
+    const gift = a.kind === 'gift';
+    askBox.innerHTML = `<div class="ask-ico">${ico(gift ? '🙏' : '💰')}</div>
+      <p><b>${esc(a.name)}</b> ${gift ? `xin bạn <b>${a.amount}</b> chip` : `muốn vay <b>${a.amount}</b> chip, hứa trả <b>${a.repay}</b>`}</p>
+      ${gift ? '' : '<small>Cho vay xong bạn thành chủ nợ: được sai vặt và ném 💩 con nợ thoải mái tới khi trả hết.</small>'}
+      <div class="ask-btns"><button class="btn ghost" data-ans="0">Không ${gift ? 'cho' : 'cho vay'}</button><button class="btn" data-ans="1">${gift ? 'Cho luôn' : 'Cho vay'}</button></div>`;
+    askBox.hidden = false;
+    askBox.querySelectorAll('[data-ans]').forEach(b => b.onclick = () => {
+      emit('loan:reply', { id: a.id, ok: b.dataset.ans === '1' }).then(x => { if (x.error && /Đợi hết ván/.test(x.error)) return; askQueue.shift(); showAsk(); });
+    });
+    clearTimeout(showAsk.t);
+    showAsk.t = setTimeout(() => { askQueue = askQueue.filter(x => x !== a); showAsk(); }, Math.max(1000, 60000 - (Date.now() - a.got)));
+  }
+  socket.on('loan:ask', a => { askQueue.push({ ...a, got: Date.now() }); sfx('bell'); if (askQueue.length === 1) showAsk(); });
+  socket.on('loan:result', ({ msg }) => { toast(msg); sfx('chat'); });
+
+  // sai vặt: chỉ là hiệu ứng vui trên ghế con nợ
+  const ORDERS = {
+    quat: { ico: '🪭', act: 'quạt mát cho', pow: 'QUẠT QUẠT~' },
+    tra: { ico: '🍵', act: 'bưng trà mời', pow: 'MỜI CHỦ NỢ!' },
+    dam: { ico: '👊', act: 'đấm lưng cho', pow: 'BỊCH BỊCH!' },
+    hat: { ico: '🎤', act: 'hát tặng', pow: '♪ LA LA LA ♪' },
+    cui: { ico: '🙇', act: 'cúi đầu chào', pow: 'DẠ THƯA!' },
+    xinloi: { ico: '🙏', act: 'xin lỗi', pow: 'CON XIN LỖI!' },
+  };
+  const ordersHTML = id => isMyDebtor(id) ? `<div class="tp-sub">Sai con nợ <span>${pname(id)} đang nợ bạn ${debtOf(S.me, id).amount} chip</span></div>
+      <div class="tp-grid orders">${Object.entries(ORDERS).map(([k, o]) => `<button data-order="${k}" title="Bắt ${o.act} bạn">${ico(o.ico)}<em>${o.act.split(' ')[0]}</em></button>`).join('')}</div>
+      <button class="tp-forgive" data-forgive>Xóa nợ cho ${pname(id)}</button>` : '';
+  socket.on('order', ({ from, to, kind }) => {
+    const o = ORDERS[kind]; if (!o || !S) return;
+    const b = seatRect(to);
+    const fx = document.createElement('div');
+    fx.className = `order-fx o-${kind}`;
+    fx.style.left = b.x + 'px'; fx.style.top = b.y + 'px';
+    fx.innerHTML = `<span class="o-ico">${ico(o.ico)}</span><b>${o.pow}</b><small>${to === S.me ? 'Bạn' : pname(to)} ${o.act} ${from === S.me ? 'bạn' : pname(from)}</small>`;
+    document.body.appendChild(fx);
+    setTimeout(() => fx.remove(), 2800);
+    const el = seatEl(to);
+    if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const bow = kind === 'cui' || kind === 'xinloi';
+      el.animate(bow ? [{ transform: 'none' }, { transform: 'translateY(6px) scale(.94) rotate(-2deg)' }, { transform: 'none' }, { transform: 'translateY(6px) scale(.94) rotate(-2deg)' }, { transform: 'none' }]
+        : [{ transform: 'none' }, { transform: 'translateX(-3px) rotate(-1deg)' }, { transform: 'translateX(3px) rotate(1deg)' }, { transform: 'none' }], { duration: bow ? 1200 : 400, iterations: bow ? 1 : 3 });
+    }
+    sfx(kind === 'dam' ? 'slam' : kind === 'hat' ? 'chat' : 'pop');
+    if (to === S.me) { toast(`${ico(o.ico)} Chủ nợ ${pname(from)} bắt bạn ${o.act} họ!`, true); if (navigator.vibrate) try { navigator.vibrate([60, 40, 60]); } catch {} }
   });
 
   // ---------- Tự xếp bài trên tay (tiến lên): kéo thả hoặc bấm xếp theo số / chất ----------
@@ -533,7 +652,7 @@
     app.innerHTML = `
       <main class="home">
         <h1 class="logo">Bàn<span>Bài</span></h1>
-        <p class="tag">Xì dách, bài cào, tiến lên. Tạo phòng rồi gửi mã cho bạn bè.</p>
+        <p class="tag">Xì dách, bài cào, tiến lên, poker. Tạo phòng rồi gửi mã cho bạn bè.</p>
         <label class="field">Tên của bạn<input id="name" maxlength="16" autocomplete="nickname" value="${esc(s.name || '')}" placeholder="Ví dụ: Tuấn"></label>
         <section>
           <h2>Vào phòng có sẵn</h2>
@@ -557,14 +676,15 @@
     };
     app.querySelectorAll('.game-btn').forEach(b => b.onclick = async () => {
       const name = getName(); if (!name) return;
-      const r = await emit('create', { name, game: b.dataset.game });
+      const r = await emit('create', { name, game: b.dataset.game, tab: TAB });
       if (r.ok) enterRoom(r);
     });
     const join = async () => {
       const name = getName(); if (!name) return;
       const c = app.querySelector('#code').value.trim().toUpperCase();
       if (c.length !== 6) return toast('Mã phòng có 6 ký tự');
-      const r = await emit('join', { code: c, name, token: s.code === c ? s.token : undefined });
+      const t = ticket();
+      const r = await emit('join', { code: c, name, tab: TAB, token: t.code === c ? t.token : undefined });
       if (r.ok) enterRoom(r);
     };
     app.querySelector('#join').onclick = join;
@@ -572,6 +692,7 @@
   }
   function enterRoom(r) {
     store.set({ code: r.code, token: r.token });
+    tabTicket.set({ code: r.code, token: r.token });
     history.replaceState(null, '', '/?r=' + r.code);
   }
 
@@ -586,7 +707,7 @@
         <span class="pn">${esc(p.name)}${p.id === S.me ? ' (bạn)' : ''}
           ${p.id === S.hostId ? '<span class="badge host">Chủ</span>' : ''}
           ${g.dealer && p.id === S.dealerId ? '<span class="badge">Cái</span>' : ''}</span>
-        <span class="seat-pts">${p.points} điểm</span>
+        <span class="seat-pts">${S.game === 'poker' ? chipTxt(p.chips) + ' · ' : ''}${p.points} điểm</span>
         ${canVote ? `<button class="btn small ${S.myVote === p.id ? '' : 'ghost'}" data-vote="${p.id}">Bầu${S.tally[p.id] ? ' ' + S.tally[p.id] : ''}</button>` : ''}
         ${isHost && p.id !== S.me ? `<button class="btn small ghost" data-kick="${p.id}" aria-label="Mời ${esc(p.name)} ra">✕</button>` : ''}
       </div>`).join('');
@@ -606,9 +727,14 @@
           <div class="seg">${Object.entries(GAMES).map(([k, x]) => `<button ${dis} class="${S.game === k ? 'on' : ''}" data-set-game="${k}">${x.name}</button>`).join('')}</div>
         </div>
         <div>
-          <h3>Mức cược mỗi ván</h3>
+          <h3>${S.game === 'poker' ? 'Mù lớn (mù nhỏ bằng nửa)' : 'Mức cược mỗi ván'}</h3>
           <div class="bets">${BETS.map(b => `<button ${dis} class="${S.bet === b ? 'on' : ''}" data-bet="${b}">${b}</button>`).join('')}</div>
         </div>
+        ${S.game === 'poker' ? `<div>
+          <h3>Chip ban đầu mỗi người</h3>
+          <div class="bets">${[500, 1000, 2000, 5000].map(b => `<button ${dis} class="${S.pkStack === b ? 'on' : ''}" data-stack="${b}">${b}</button>`).join('')}</div>
+          <p class="note">Áp dụng cho người mới vào bàn poker. Hết chip thì ngồi xem, muốn chơi tiếp phải đi xin hoặc vay người khác.</p>
+        </div>` : ''}
         ${g.dealer ? `<div>
           <h3>Cách chọn nhà cái</h3>
           <div class="seg">
@@ -636,6 +762,7 @@
     root.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => { if (confirm('Mời người này ra khỏi phòng?')) emit('kick', { id: b.dataset.kick }); });
     root.querySelectorAll('[data-set-game]').forEach(b => b.onclick = () => emit('settings', { game: b.dataset.setGame }));
     root.querySelectorAll('[data-bet]').forEach(b => b.onclick = () => emit('settings', { bet: +b.dataset.bet }));
+    root.querySelectorAll('[data-stack]').forEach(b => b.onclick = () => emit('settings', { pkStack: +b.dataset.stack }));
     root.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => emit('settings', { dealerMode: b.dataset.mode }));
     root.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => emit('settings', { dealFx: b.dataset.fx }));
     root.querySelectorAll('[data-sound]').forEach(b => b.onclick = () => {
@@ -646,7 +773,7 @@
     const lv = root.querySelector('[data-leave]');
     if (lv) lv.onclick = () => {
       if (!confirm('Rời phòng?')) return;
-      socket.emit('leave'); store.set({ code: null, token: null }); S = null; sheetOpen = false; resetChat();
+      socket.emit('leave'); store.set({ code: null, token: null }); tabTicket.set({}); S = null; sheetOpen = false; resetChat();
       history.replaceState(null, '', '/'); render();
     };
   }
@@ -658,11 +785,12 @@
     const dealer = r.dealer === seat.id;
     const j = r.seats.indexOf(seat);
     const nBack = Math.min(seat.count, r.game === 'tienlen' ? 1 : 5);
-    let cards = seat.cards ? seat.cards.map((c, i) => card(c, '', dk(r, j, seat.id, i))).join('')
+    let cards = seat.cards ? seat.cards.map((c, i) => card(c, seat.best && seat.best.includes(c.id) ? 'hi' : '', dk(r, j, seat.id, i))).join('')
       : Array.from({ length: nBack }, (_, i) => card(null, '', dk(r, j, seat.id, i))).join('');
     if (r.game === 'tienlen') cards = (seat.cards && r.phase === 'done' ? cards : (seat.count ? card(null, '', dk(r, j, seat.id, 0)) : '')) + `<span class="count">${seat.count} lá</span>`;
     let info = '';
-    if (seat.result != null && seat.id !== r.dealer) info = money(seat.result * S.bet);
+    if (r.game === 'poker') info = pkSeatInfo(seat, r);
+    else if (seat.result != null && seat.id !== r.dealer) info = money(seat.result * S.bet);
     else if (seat.info) info = esc(seat.info);
     if (r.game === 'tienlen') {
       if (seat.place) info = `Về thứ ${seat.place}`;
@@ -671,9 +799,9 @@
     if (r.game === 'xidach' && seat.stood && seat.result == null && !dealer) info = info || 'Đã dằn';
     const timer = isTurn ? `<span class="turn-tools">${S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span>` : ''}${seat.id !== S.me ? bellBtn(seat.id, esc(p.name)) : ''}</span>` : '';
     const canCheck = r.game === 'xidach' && r.phase === 'dealer' && S.me === r.dealer && !dealer && seat.result == null;
-    return `<div class="seat ${isTurn ? 'turn' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''}" data-pid="${seat.id}">
+    return `<div class="seat ${isTurn ? 'turn' : ''} ${seat.win ? 'won' : ''} ${seat.folded ? 'folded' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''}" data-pid="${seat.id}">
       ${ringFx(seat.id)}${seat.id !== S.me ? tauntBtn(seat.id, esc(p.name)) : ''}
-      <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}</span><span class="seat-pts">${p.points}</span></div>
+      <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}${r.game === 'poker' ? pkBadges(seat, true) : ''}${debtBadges(seat.id)}</span><span class="seat-pts">${r.game === 'poker' ? chipTxt(seat.chips) : p.points}</span></div>
       ${bubble(seat.id)}
       <div class="mini">${cards}</div>
       <div class="seat-info"><span>${info}</span>${timer}</div>
@@ -715,8 +843,171 @@
   }
 
   // ---------- Bàn chơi ----------
+  // ---------- Poker ----------
+  const PK_PHASE = { preflop: 'Vòng đầu', flop: 'Lật 3 lá', turn: 'Lá thứ tư', river: 'Lá cuối' };
+  const pkBadges = (s, noD) => (s.btn && !noD ? ' <span class="badge pk-d" title="Nút chia bài">D</span>' : '')
+    + (s.sb ? ' <span class="badge pk-b" title="Mù nhỏ">MN</span>' : '') + (s.bb ? ' <span class="badge pk-b" title="Mù lớn">ML</span>' : '');
+  function pkSeatInfo(s, r) {
+    if (r.phase === 'done') return (s.info ? `<b class="pk-hand">${esc(s.info)}</b> ` : s.folded ? 'Bỏ bài ' : '') + (s.net ? money(s.net) : '');
+    if (s.folded) return 'Bỏ bài';
+    return s.last ? esc(s.last) : '';
+  }
+  // Bàn bầu dục: mình ngồi giữa phía dưới, lượt đi theo chiều kim đồng hồ
+  // (người nói sau mình ngồi bên trái, rồi vòng lên trên, sang phải). Góc tính theo màn hình: 90° là dưới, 180° là trái.
+  // vị trí trên mép bàn: f = 1 là đúng mép (tâm ghế), nhỏ hơn là vào trong. --mx/--my chừa chỗ để ghế không tràn ra ngoài.
+  const pkAt = (deg, f = 1) => { const t = deg * Math.PI / 180, c = (Math.cos(t) * f).toFixed(4), s = (Math.sin(t) * f).toFixed(4);
+    return `left:calc(50% + ${c} * (50% - var(--mx)));top:calc(50% + ${s} * (50% - var(--my)))`; };
+  function pkSelf(r, mine) {
+    const isTurn = r.turn === S.me && r.phase !== 'done';
+    const st = r.phase === 'done' ? (mine.net ? money(mine.net) : 'Hòa') : mine.folded ? 'Bỏ bài' : mine.last ? esc(mine.last) : '';
+    return `<div class="seat self ${isTurn ? 'turn' : ''} ${mine.win ? 'won' : ''} ${mine.folded ? 'folded' : ''} ${isRinging(S.me) ? 'ringing' : ''}" data-pid="${S.me}">
+      ${bubble(S.me, true)}${ringFx(S.me)}
+      <div class="seat-top"><span class="seat-name">Bạn${pkBadges(mine, true)}${debtBadges(S.me)}</span><span class="seat-pts">${chipTxt(mine.chips)}</span></div>
+      ${st ? `<div class="seat-info"><span>${st}</span></div>` : ''}
+    </div>`;
+  }
+  // chia ghế đều theo chiều dài mép bàn (bàn dẹt thì cạnh dài có nhiều ghế hơn), bắt đầu từ chỗ mình ở dưới
+  let pkDims = null; // kích thước bàn lần vẽ trước: { a: bán trục ngang, b: bán trục dọc } (px)
+  function pkAngles(n) {
+    const A = pkDims ? pkDims.a : Math.min(innerWidth, 1100) / 2 - 70, B = pkDims ? pkDims.b : Math.max(110, innerHeight * .2);
+    const N = 720, len = [0];
+    const pt = d => { const t = d * Math.PI / 180; return [A * Math.cos(t), B * Math.sin(t)]; };
+    for (let i = 1; i <= N; i++) { const p = pt(90 + (i - 1) / 2), q = pt(90 + i / 2); len.push(len[i - 1] + Math.hypot(q[0] - p[0], q[1] - p[1])); }
+    const L = len[N];
+    return Array.from({ length: n }, (_, k) => {
+      const target = k * L / n; let i = 0; while (len[i] < target) i++;
+      return 90 + i / 2;
+    });
+  }
+  function pkTable(r, mine, center) {
+    const n = r.seats.length, angs = pkAngles(n);
+    const start = mine ? r.seats.indexOf(mine) : 0;
+    const ring = r.seats.map((_, k) => r.seats[(start + k) % n]);
+    const live = r.phase !== 'done';
+    let html = '<div class="pk-oval" aria-hidden="true"></div>';
+    ring.forEach((seat, k) => {
+      const deg = angs[k], nextDeg = k + 1 < n ? angs[k + 1] : 450, step = nextDeg - deg;
+      html += `<div class="pk-pos" style="${pkAt(deg)}">${k === 0 && mine ? pkSelf(r, mine) : seatHTML(seat, r)}</div>`;
+      // chip cược đặt trước ghế, nút D đặt lệch bên cạnh
+      if (live && seat.bet) html += `<span class="chip pk-bet" style="${pkAt(deg, .6)}">${seat.bet}</span>`;
+      if (seat.btn) html += `<span class="pk-dbtn" title="Nút chia bài" style="${pkAt(deg - Math.min(22, step / 2.6), .68)}">D</span>`;
+      // mũi tên giữa ghế này và ghế kế tiếp, chỉ chiều đi
+      if (n > 1) {
+        const on = live && r.turn === seat.id;
+        html += `<span class="pk-arrow ${on ? 'on' : ''}" data-a="${deg + step / 2}" style="${pkAt(deg + step / 2)}" aria-hidden="true"><i>➜</i></span>`;
+      }
+    });
+    return `<div class="pk-table n${n} ${n >= 7 ? 'dense' : ''}" ${pkH ? `style="height:${pkH}px"` : ''}>${html}<div class="pk-mid">${center}<div class="pk-status">${statusText(r, mine)}</div></div><div class="pk-log" aria-live="polite">${S.log.slice(-2).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div><span class="pk-dir" title="Lượt đi theo chiều kim đồng hồ"><b aria-hidden="true">↻</b> chiều kim đồng hồ</span></div>`;
+  }
+  // xoay mũi tên theo đúng hướng tiếp tuyến của mép bàn (cần kích thước thật của bàn)
+  let pkH = 0; // chiều cao bàn vừa khít khung (đo sau khi vẽ)
+  function orientArrows() {
+    const t = app.querySelector('.pk-table'); if (!t) return;
+    // bàn cao vừa đúng phần còn trống của khung chơi, không phải cuộn
+    const felt = app.querySelector('.felt');
+    if (felt) {
+      const inner = t.parentElement, ics = getComputedStyle(inner), fcs = getComputedStyle(felt);
+      const kids = [...inner.children].filter(c => c !== t && getComputedStyle(c).display !== 'none');
+      const others = kids.reduce((h, c) => h + c.offsetHeight, 0) + kids.length * (parseFloat(ics.rowGap) || 0);
+      const room = felt.clientHeight - parseFloat(fcs.paddingTop) - parseFloat(fcs.paddingBottom);
+      const want = Math.round(Math.max(200, Math.min(640, room - others - 6)));
+      if (Math.abs(t.offsetHeight - want) > 6) { pkH = want; t.style.height = want + 'px'; }
+      felt.scrollTop = 0;
+    }
+    const cs = getComputedStyle(t);
+    const W = t.clientWidth / 2 - parseFloat(cs.getPropertyValue('--mx')), H = t.clientHeight / 2 - parseFloat(cs.getPropertyValue('--my'));
+    // kích thước đổi nhiều thì vẽ lại để chia ghế theo đúng hình bàn
+    const changed = !pkDims || Math.abs(pkDims.a - W) > 20 || Math.abs(pkDims.b - H) > 20;
+    pkDims = { a: W, b: H };
+    if (changed && !orientArrows.busy) { orientArrows.busy = true; render(); orientArrows.busy = false; return; }
+    t.querySelectorAll('.pk-arrow').forEach(el => {
+      const a = +el.dataset.a * Math.PI / 180;
+      el.firstChild.style.transform = `rotate(${Math.atan2(H * Math.cos(a), -W * Math.sin(a)) * 180 / Math.PI}deg)`;
+    });
+    // ghế nào lòi ra ngoài bàn (ghế cao, có chuông, có nút 😈 phía trên) thì đẩy vào trong
+    const tr = t.getBoundingClientRect();
+    t.querySelectorAll('.pk-pos').forEach(el => {
+      el.style.translate = '';
+      const r = el.getBoundingClientRect();
+      const top = tr.top + 16, bottom = tr.bottom - 4, left = tr.left + 14, right = tr.right - 4;
+      const dy = r.top < top ? top - r.top : r.bottom > bottom ? Math.max(top - r.top, bottom - r.bottom) : 0;
+      const dx = r.left < left ? left - r.left : r.right > right ? right - r.right : 0;
+      if (dx || dy) el.style.translate = `${Math.round(dx)}px ${Math.round(dy)}px`;
+    });
+    fitMid(t, tr);
+    const seatRs = [...t.querySelectorAll('.pk-pos')].map(e => e.getBoundingClientRect());
+    const ccx = tr.left + tr.width / 2, ccy = tr.top + tr.height / 2;
+    // chip cược / nút D bị ghế hoặc khu giữa che thì ẩn đi (số tiền vẫn ghi trên ghế)
+    const midR = (t.querySelector('.pk-mid .pk-center') || t).getBoundingClientRect();
+    t.querySelectorAll('.pk-bet, .pk-dbtn').forEach(el => {
+      el.style.visibility = '';
+      const r = el.getBoundingClientRect();
+      const hit = s => r.left < s.right && r.right > s.left && r.top < s.bottom && r.bottom > s.top;
+      if (seatRs.some(hit) || hit(midR)) el.style.visibility = 'hidden';
+    });
+  }
+  // Đặt khu giữa bàn (5 lá chung, hũ, trạng thái) vào khoảng trống giữa các ghế, chật thì thu nhỏ lại
+  function fitMid(t, tr) {
+    const mid = t.querySelector('.pk-mid'); if (!mid) return;
+    mid.style.left = ''; mid.style.top = ''; mid.style.transform = '';
+    const m = mid.getBoundingClientRect();
+    const seats = [...t.querySelectorAll('.pk-pos')].map(e => e.getBoundingClientRect());
+    const cx = tr.left + tr.width / 2, cy = tr.top + tr.height / 2, gap = 6;
+    // khoảng dọc: dưới các ghế phía trên, trên các ghế phía dưới (chỉ tính ghế nằm ngang hàng với khu giữa)
+    let top = tr.top + gap, bottom = tr.bottom - gap;
+    seats.forEach(r => {
+      if (r.right <= m.left || r.left >= m.right) return;
+      if ((r.top + r.bottom) / 2 < cy) top = Math.max(top, r.bottom + gap);
+      else bottom = Math.min(bottom, r.top - gap);
+    });
+    // khoảng ngang: giữa các ghế hai bên nằm trong khoảng dọc đó
+    let left = tr.left + gap, right = tr.right - gap;
+    seats.forEach(r => {
+      if (r.bottom <= top || r.top >= bottom) return;
+      if ((r.left + r.right) / 2 < cx) left = Math.max(left, r.right + gap);
+      else right = Math.min(right, r.left - gap);
+    });
+    const s = Math.max(.5, Math.min(1, (bottom - top) / m.height, (right - left) / m.width));
+    mid.style.left = ((left + right) / 2 - tr.left) + 'px';
+    mid.style.top = ((top + bottom) / 2 - tr.top) + 'px';
+    if (s < 1) mid.style.transform = `translate(-50%, -50%) scale(${s.toFixed(3)})`;
+  }
+  addEventListener('resize', () => orientArrows());
+  let raise = { open: false, to: 0, key: null };
+  function pkRaiseBar(r) {
+    const pot = r.pot, call = r.toCall;
+    const clamp = v => Math.max(r.minRaiseTo, Math.min(r.maxRaiseTo, Math.round(v)));
+    const presets = [['Tối thiểu', r.minRaiseTo], ['½ hũ', clamp(r.high + (pot + call) / 2)], ['Cả hũ', clamp(r.high + pot + call)], ['Tất tay', r.maxRaiseTo]];
+    return `<div class="raise-bar">
+      <div class="rb-presets">${presets.map(([t, v]) => `<button class="btn small ghost ${raise.to === v ? 'on' : ''}" data-raise-to="${v}">${t}</button>`).join('')}<button class="btn small ghost" data-raise-close aria-label="Đóng">✕</button></div>
+      <input type="range" min="${r.minRaiseTo}" max="${r.maxRaiseTo}" step="1" value="${raise.to}" data-raise-range aria-label="Số chip muốn tố">
+      <div class="rb-row"><span>${r.minRaiseTo}</span><span class="rb-step"><button class="btn small ghost" data-raise-step="-1" aria-label="Bớt ${S.bet}">−</button><b>Tố lên <span data-raise-val>${raise.to}</span></b><button class="btn small ghost" data-raise-step="1" aria-label="Thêm ${S.bet}">+</button></span><span>${r.maxRaiseTo}</span></div>
+    </div>`;
+  }
+  function pkCenter(r) {
+    const slots = Array.from({ length: 5 }, (_, i) => r.board[i]
+      ? card(r.board[i], r.seats.some(s => s.best && s.best.includes(r.board[i].id)) ? 'hi' : '', `data-k="${r.id}:board:${i}" data-i="${i}" data-j="99"`)
+      : '<div class="card slot"></div>').join('');
+    return `<div class="center pk-center">
+      <div class="cards board">${slots}</div>
+      <div class="pk-pot"><span class="chip big">${r.pot}</span><span>Hũ</span>${r.phase !== 'done' ? `<small>${PK_PHASE[r.phase]}</small>` : ''}</div>
+      ${r.sidePots && r.sidePots.length > 1 ? `<div class="pk-pots">${r.sidePots.map((v, i) => `<span>${i ? 'Hũ phụ' + (r.sidePots.length > 2 ? ' ' + i : '') : 'Hũ chính'} <b>${v}</b></span>`).join('')}</div>` : ''}
+      ${r.pots && r.pots.length > 1 ? `<div class="pk-pots">${r.pots.map((p, i) => `<span>${i ? 'Hũ phụ' : 'Hũ chính'} <b>${p.amount}</b> → ${p.winners.map(id => id === S.me ? 'Bạn' : pname(id)).join(', ')}</span>`).join('')}</div>` : ''}
+    </div>`;
+  }
+  function pkStatus(r, mine, myTurn) {
+    if (r.phase === 'done') {
+      const w = (r.winners || []).map(id => id === S.me ? 'Bạn' : pname(id)).join(', ');
+      return r.winLabel ? `${w} thắng với ${esc(r.winLabel)}` : `${w} ăn hũ, mọi người bỏ bài`;
+    }
+    if (!mine) return 'Bạn đang xem ván này, ván sau sẽ được chia bài';
+    if (mine.folded) return `Bạn đã bỏ bài. Đợi ${pname(r.turn)}`;
+    if (myTurn) return r.toCall ? `Tới lượt bạn: theo ${r.toCall}${r.canRaise ? `, tố lên từ ${r.minRaiseTo}` : ""} hoặc bỏ bài` : 'Tới lượt bạn: xem hoặc tố';
+    return `Đợi ${pname(r.turn)}`;
+  }
   function statusText(r, mine) {
     const myTurn = r.turn === S.me && r.phase !== 'done';
+    if (r.game === 'poker') return pkStatus(r, mine, myTurn);
     if (r.phase === 'done') {
       if (r.toiTrang) return `${pname(r.toiTrang.by)} tới trắng: ${esc(r.toiTrang.label)}`;
       if (r.ranking) return `${pname(r.ranking[0])} về nhất`;
@@ -735,11 +1026,17 @@
     return '';
   }
 
+  // người trong phòng nhưng không có ghế ở ván này (vào giữa ván, hoặc quá số người tối đa)
+  function watchersHTML(r) {
+    const w = S.players.filter(p => !r.seats.some(x => x.id === p.id));
+    if (!w.length) return '';
+    return `<div class="watchers"><span>Đang ngồi xem:</span>${w.map(p => `<b class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === S.me ? ' (bạn)' : ''}${S.game === 'poker' && p.chips <= 0 ? ' · hết chip' : ''}</b>`).join('')}<small>${S.game === 'poker' ? 'Ván sau sẽ được chia bài nếu còn chip' : 'Ván sau sẽ được chia bài'}</small></div>`;
+  }
   function renderRoom() {
     const g = GAMES[S.game], r = S.round, isHost = S.me === S.hostId;
     const mine = r && r.seats.find(x => x.id === S.me);
     const others = r ? r.seats.filter(x => x.id !== S.me) : [];
-    const canStart = (!r || r.phase === 'done') && (isHost || (g.dealer && S.me === S.dealerId));
+    const canStart = (!r || r.phase === 'done') && (isHost || (g.dealer && S.me === S.dealerId) || S.game === 'poker');
     const me = S.players.find(p => p.id === S.me) || { points: 0 };
 
     let center = '';
@@ -748,30 +1045,32 @@
         ? `<div class="cards">${r.table.cards.map(c => card(c)).join('')}</div><small>${pname(r.table.by)} đánh ${esc(r.table.label)}</small>`
         : `<small>Bàn trống</small>`}</div>`;
     }
+    if (r && r.game === 'poker') center = pkCenter(r);
     let body;
     if (!r) {
       body = `<div class="panel-wrap">${panelHTML()}</div>`;
     } else {
       body = `
-        ${r.game === 'tienlen' ? tlTable(r, mine, center)
+        ${r.game === 'tienlen' ? tlTable(r, mine, center) : r.game === 'poker' ? pkTable(r, mine, center)
           : `<div class="seats ${others.length > 7 ? 'many' : ''}">${others.map(s => seatHTML(s, r)).join('')}</div>`}
-        <div class="status">${statusText(r, mine)}${r.phase === 'done' && !canStart ? '<small>Đợi chủ phòng hoặc nhà cái chia ván mới</small>' : ''}</div>
-        <div class="feed">${S.log.slice(-3).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div>`;
+        ${watchersHTML(r)}
+        <div class="status ${r.game === 'poker' ? 'pk-hide' : ''}">${statusText(r, mine)}${r.phase === 'done' && !canStart ? '<small>Đợi chủ phòng hoặc nhà cái chia ván mới</small>' : ''}</div>
+        <div class="feed ${r.game === 'poker' ? 'pk-hide' : ''}">${S.log.slice(-3).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div>`;
     }
 
     // phần của mình
-    let hand = '', actions = '', head = '';
+    let hand = '', actions = '', head = '', raiseBar = '';
     if (r && mine) {
       const myTurn = r.turn === S.me && r.phase !== 'done';
-      const resTxt = mine.result != null && S.me !== r.dealer ? ' ' + money(mine.result * S.bet) : '';
+      const resTxt = r.game === 'poker' ? (mine.net != null ? ' ' + money(mine.net) : '') : mine.result != null && S.me !== r.dealer ? ' ' + money(mine.result * S.bet) : '';
       const myJ = r.seats.indexOf(mine);
       const nan = r.game !== 'tienlen' ? squeeze(r, mine, myJ) : null;
       const locked = nan && nan.hidden > 0;
       let infoTxt = locked ? 'Vuốt lá bài để nặn' : mine.info ? esc(mine.info) : '';
       if (r.game === 'tienlen') infoTxt = (mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`)
         + (mine.cards && mine.cards.length > 1 ? ` <span class="sort-tools">Xếp <button class="btn small ghost" data-sort="rank">Số</button><button class="btn small ghost" data-sort="suit">Chất</button></span>` : '');
-      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}" ${r.game === 'tienlen' ? '' : `data-pid="${S.me}"`}><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${ringFx(S.me)}</span>
-        <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.points} điểm</span></div>`;
+      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}" ${r.game === 'tienlen' ? '' : `data-pid="${S.me}"`}><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${r.game === 'poker' ? pkBadges(mine) + (mine.bet && r.phase !== 'done' ? ` <span class="chip">${mine.bet}</span>` : '') : ''}${ringFx(S.me)}</span>
+        <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${r.game === 'poker' ? chipTxt(mine.chips) + ' · ' : ''}${me.points} điểm</span></div>`;
       if (r.game === 'tienlen') {
         hand = `<div class="hand tl">${orderedHand(r, mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
         if (r.phase !== 'done') actions = `
@@ -787,6 +1086,23 @@
           else if (S.me === r.dealer) actions = `
             <button class="btn ghost" data-act="checkAll" ${myTurn && !locked ? '' : 'disabled'}>Xét hết</button>
             <button class="btn" data-act="hit" ${myTurn && !locked ? '' : 'disabled'}>Rút bài</button>`;
+        }
+        if (r.game === 'poker' && r.phase !== 'done') {
+          if (mine.folded) actions = '<div class="hint" style="flex:1">Bạn đã bỏ bài, đợi hết ván</div>';
+          else {
+            const dis = myTurn && !locked ? '' : 'disabled';
+            const rk = r.id + ':' + r.phase + ':' + r.high + ':' + mine.bet;
+            if (raise.key !== rk) raise = { open: false, to: r.minRaiseTo, key: rk };
+            raise.to = Math.max(r.minRaiseTo, Math.min(r.maxRaiseTo, raise.to));
+            const canR = myTurn && !locked && r.canRaise;
+            if (!canR) raise.open = false;
+            actions = `
+            <button class="btn ghost" data-act="fold" ${dis}>Bỏ bài</button>
+            ${r.toCall ? `<button class="btn ghost" data-act="call" ${dis}>${r.callAllIn ? 'Tất tay ' + r.toCall : 'Theo ' + r.toCall}</button>` : `<button class="btn ghost" data-act="check" ${dis}>Xem</button>`}
+            ${raise.open ? `<button class="btn" data-raise-go>${raise.to >= r.maxRaiseTo ? 'Tất tay ' : r.high ? 'Tố lên ' : 'Tố '}<span data-raise-val>${raise.to}</span></button>`
+              : `<button class="btn" data-raise-open ${canR ? '' : 'disabled'}>${r.high ? 'Tố thêm' : 'Tố'}…</button>`}`;
+            if (raise.open) raiseBar = pkRaiseBar(r);
+          }
         }
         if (r.game === 'baicao' && r.phase !== 'done') {
           actions = `<button class="btn ghost" data-act="flip" ${mine.flipped || locked ? 'disabled' : ''}>${mine.flipped ? 'Đã lật' : 'Lật bài'}</button>`;
@@ -804,13 +1120,14 @@
         ${socket.connected ? '' : '<div class="offline-bar">Mất kết nối, đang nối lại…</div>'}
         <header class="bar">
           <button class="code-chip" data-share aria-label="Chia sẻ mã phòng">${S.code}</button>
-          <div class="bar-title"><b>${g.name}</b>Cược ${S.bet}${g.dealer && S.dealerId ? `, cái: ${pname(S.dealerId)}` : ''}</div>
+          <div class="bar-title"><b>${g.name}</b>${S.game === 'poker' ? `Mù ${Math.max(1, Math.floor(S.bet / 2))}/${S.bet}` : `Cược ${S.bet}`}${g.dealer && S.dealerId ? `, cái: ${pname(S.dealerId)}` : ''}</div>
           <button class="btn small ghost chat-btn ${chatOpen ? 'on' : ''}" data-chat aria-label="Trò chuyện${unread ? `, ${unread} tin chưa đọc` : ''}">${ico('💬')}${unread ? `<span class="unread">${unread > 9 ? '9+' : unread}</span>` : ''}</button>
           ${r ? '<button class="btn small ghost" data-sheet>Phòng</button>' : ''}
         </header>
         <section class="felt"><div class="room-inner" style="display:flex;flex-direction:column;gap:12px">${body}</div></section>
         <section class="me"><div class="room-inner" style="display:flex;flex-direction:column;gap:10px">
           ${head}${hand}
+          ${S.game === 'poker' ? loanRow() : ''}${raiseBar}
           <div class="actions">${actions}</div>
         </div></section>
       </div>
@@ -959,6 +1276,18 @@
       if (type === 'play') return emit('act', { type, cards: [...sel] }).then(r => { if (r.ok) sel.clear(); render(); });
       emit('act', { type });
     });
+    const sc = app.querySelector('[data-showcards]'); if (sc) sc.onclick = () => emit('act', { type: 'show' });
+    app.querySelectorAll('[data-sitout]').forEach(b => b.onclick = () => emit('sitout', { on: b.dataset.sitout === '1' }));
+    app.querySelectorAll('[data-loan]').forEach(b => b.onclick = e => { e.stopPropagation(); openLoan(b.dataset.loan, b); });
+    app.querySelectorAll('[data-repay]').forEach(b => b.onclick = () => emit('loan:repay', { lender: b.dataset.repay }));
+    const ro = app.querySelector('[data-raise-open]'); if (ro) ro.onclick = () => { raise.open = true; render(); };
+    const rc = app.querySelector('[data-raise-close]'); if (rc) rc.onclick = () => { raise.open = false; render(); };
+    app.querySelectorAll('[data-raise-step]').forEach(b => b.onclick = () => { const r = S.round; raise.to = Math.max(r.minRaiseTo, Math.min(r.maxRaiseTo, raise.to + +b.dataset.raiseStep * S.bet)); render(); });
+    app.querySelectorAll('[data-raise-to]').forEach(b => b.onclick = () => { raise.to = +b.dataset.raiseTo; render(); });
+    const rr = app.querySelector('[data-raise-range]');
+    if (rr) rr.oninput = () => { raise.to = +rr.value; app.querySelectorAll('[data-raise-val]').forEach(x => { x.textContent = rr.value; }); };
+    const rg = app.querySelector('[data-raise-go]');
+    if (rg) rg.onclick = () => { const to = raise.to, r = S.round; raise.open = false; emit('act', to >= r.maxRaiseTo ? { type: 'allin' } : { type: 'raise', to }); };
     app.querySelectorAll('[data-check]').forEach(b => b.onclick = () => emit('act', { type: 'check', target: b.dataset.check }));
     const st = app.querySelector('[data-start]'); if (st) st.onclick = () => emit('start');
     const cl = app.querySelector('[data-clear]'); if (cl) cl.onclick = () => { sel.clear(); render(); };
@@ -993,6 +1322,7 @@
     const f2 = app.querySelector('.felt'), s2 = app.querySelector('.sheet');
     if (f2) f2.scrollTop = y; if (s2) s2.scrollTop = sy;
     animateDeal();
+    orientArrows();
     animatePlay(prevHand);
     flipHand(prevHand);
     justRevealed = null;

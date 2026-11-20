@@ -110,6 +110,34 @@
   I['🔒'] = P('M22 28v-8q0-10 10-10t10 10v8', 'none', 5) + `<rect x="13" y="28" width="38" height="28" rx="5" fill="#ffd400" ${st()}/>`
     + `<circle cx="32" cy="40" r="3.6" fill="${K}"/><rect x="30.5" y="41" width="3" height="8" rx="1" fill="${K}"/>`;
   I['🔕'] = I['🔔'];
+  // ---- chủ nợ / con nợ ----
+  I['💰'] = P('M22 14l-4-8h28l-4 8', '#e0a43a', 2.6)
+    + P('M22 14q-14 10-14 26 0 18 24 18t24-18q0-16-14-26z', '#f2b84b')
+    + line('M22 14h20', K, 3) + P('M28 30q-6 0-6 5t6 5h8q6 0 6 5t-6 5h-8M32 25v30', 'none', 3)
+    + shine('M16 36q1-8 7-13');
+  I['⛓'] = `<g transform="rotate(-35 32 32)">`
+    + `<rect x="4" y="24" width="22" height="16" rx="8" fill="none" ${st(4)}/><rect x="21" y="24" width="22" height="16" rx="8" fill="none" ${st(4)}/><rect x="38" y="24" width="22" height="16" rx="8" fill="none" ${st(4)}/>`
+    + line('M10 28h10M44 28h10', '#bbb', 2) + `</g>`;
+  I['🍵'] = line('M24 14q-4-5 0-9M32 13q-4-5 0-9M40 14q-4-5 0-9', '#9e9e9e', 2.6)
+    + P('M10 24h44v6q0 22-22 22T10 30z', '#fff') + P('M12 27h40', 'none', 2.4)
+    + `<ellipse cx="32" cy="26" rx="20" ry="3" fill="#8bc34a"/>` + P('M20 56h24', 'none', 4)
+    + eyes(38, 6, .8) + blush(43, 12) + smile(32, 43, 5);
+  I['🎤'] = P('M28 34l-12 24', 'none', 7) + line('M28 34l-12 24', '#666', 3)
+    + C(36, 22, 14, '#9e9e9e') + line('M26 16q10-6 20 4M24 24q12-8 24 2', '#666', 2)
+    + shine('M28 13q4-3 8-2') + line('M52 6l4-2M54 14h6M50 2l1-2', '#e60012', 2.6)
+    + `<text x="50" y="36" font-size="14" font-weight="900" fill="#e60012">♪</text>`;
+  I['🙇'] = P('M8 58q4-18 24-18t24 18', '#4a90e2') + C(32, 30, 15, SKIN)
+    + P('M17 26q2-14 15-14t15 14q-6-6-15-6t-15 6z', '#333', 2.4)
+    + P('M24 32q3 2 6 0M34 32q3 2 6 0', 'none', 2.4) + P('M29 38q3 2 6 0', 'none', 2.2)
+    + tear(50, 18) + line('M6 20l5 3M58 22l-5 2', '#5ec8ff', 2.4);
+  I['🙏'] = `<rect x="16" y="10" width="15" height="38" rx="7.5" fill="${SKIN}" ${st()} transform="rotate(10 23 29)"/>`
+    + `<rect x="33" y="10" width="15" height="38" rx="7.5" fill="${SKIN}" ${st()} transform="rotate(-10 41 29)"/>`
+    + `<rect x="14" y="48" width="36" height="10" rx="3" fill="#4a90e2" ${st(2.6)}/>` + line('M8 8l4 4M56 8l-4 4M32 2v5', '#ffb300', 3);
+  I['🪭'] = P('M32 56L6 26q26-26 52 0z', '#ff8fab') + line('M32 56L14 18M32 56L32 12M32 56L50 18M32 56L6 26M32 56L58 26', K, 2)
+    + P('M10 28q22-20 44 0', 'none', 2) + C(32, 56, 4, '#e60012') + line('M58 40q4 2 4 6M56 48q3 2 3 5', '#5ec8ff', 2.6);
+  I['👊'] = `<rect x="12" y="18" width="34" height="30" rx="10" fill="${SKIN}" ${st()}/>`
+    + line('M20 18v12M28 18v12M36 18v12', K, 2.2) + P('M12 36q8 0 12 6', 'none', 2.4)
+    + `<rect x="44" y="24" width="10" height="20" rx="2" fill="#4a90e2" ${st(2.6)}/>` + line('M4 12l6 4M2 26h7M6 40l5-3', '#ffb300', 3);
 
   function hand() {
     return P('M23 30V14q0-8 7-8t6 8v15', SKIN)

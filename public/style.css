@@ -776,3 +776,176 @@ button, input { color: var(--ink); }
 #toast .ico { width: 22px; height: 22px; vertical-align: -6px; }
 .taunt-btn:hover .ico, .tp-grid button:hover:not(:disabled) .ico, .bell:hover .ico { animation: icoWiggle .35s ease-in-out; }
 @keyframes icoWiggle { 30% { transform: rotate(-12deg) scale(1.1); } 70% { transform: rotate(10deg) scale(1.1); } }
+
+/* ---------- Người đang ngồi xem ---------- */
+.watchers {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: 6px auto 0;
+  font-size: 13px; max-width: 640px; text-align: center;
+}
+.watchers span { font-weight: 800; }
+.watchers b { background: #fff; color: #111; border: 2px solid #111; border-radius: 2px; padding: 1px 8px; box-shadow: 2px 2px 0 #111; font-weight: 800; }
+.watchers b.off { opacity: .5; }
+.watchers small { width: 100%; color: #555; font-size: 11px; }
+
+/* ---------- Poker ---------- */
+.pk-center { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 10px; }
+.pk-center .board { flex-wrap: nowrap; gap: 6px; }
+.pk-center .board .card { --w: clamp(40px, 9vw, 62px); }
+.card.slot { background: transparent !important; border: 2.5px dashed rgba(0,0,0,.3) !important; box-shadow: none !important; }
+.card.hi { box-shadow: 0 0 0 3px #ffd400, 3px 3px 0 #111 !important; transform: translateY(-4px); }
+.pk-pot { display: flex; align-items: center; gap: 8px; font-weight: 800; flex-wrap: wrap; justify-content: center; }
+.pk-pot small { width: 100%; text-align: center; font-weight: 600; color: #555; font-size: 12px; }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 22px; padding: 0 7px;
+  border-radius: 999px; background: #e60012; color: #fff; border: 2.5px dashed #fff; outline: 2px solid #111;
+  font: 800 12px var(--sans, 'Nunito', sans-serif); line-height: 1;
+}
+.chip.big { min-width: 44px; height: 32px; font-size: 16px; padding: 0 12px; }
+.badge.pk-d { background: #fff; color: #111; border: 2px solid #111; border-radius: 50%; padding: 0 5px; font-weight: 900; }
+.badge.pk-b { background: #111; color: #fff; border-radius: 2px; padding: 0 4px; font-size: 10px; }
+.seat.folded { opacity: .55; }
+.seat.folded .mini { filter: grayscale(1); }
+.seat.won { border-color: #ffd400 !important; box-shadow: 0 0 0 3px #ffd400, 5px 5px 0 #111 !important; animation: wonPop .5s ease-out; }
+@keyframes wonPop { 40% { transform: scale(1.05) rotate(-1deg); } }
+.pk-hand { font-weight: 800; }
+@media (max-width: 380px) { .pk-center .board .card { --w: 40px; } }
+@media (max-height: 760px) {
+  .pk-center { padding: 6px 8px; gap: 12px; flex-direction: row; justify-content: center; min-height: 0 !important; }
+  .pk-center .board .card { --w: 40px; }
+  .pk-pot small { display: none; }
+  .chip.big { height: 26px; font-size: 14px; }
+}
+
+/* ---------- Bàn poker bầu dục ---------- */
+.pk-table { --mx: 78px; --my: 50px; position: relative; width: 100%; height: clamp(320px, 58vh, 580px); margin: 2px auto 0; max-width: 1100px; }
+.pk-oval {
+  position: absolute; inset: var(--my) var(--mx); border-radius: 50%; background: #fff; border: 4px solid #111;
+  box-shadow: 6px 6px 0 #111, inset 0 0 0 10px #fff, inset 0 0 0 13px rgba(0,0,0,.18);
+  background-image: radial-gradient(rgba(0,0,0,.09) 1px, transparent 1.4px); background-size: 7px 7px;
+}
+.pk-mid { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; width: max-content; max-width: calc(100% - 4 * var(--mx) - 10px); }
+.pk-mid .center { background: transparent !important; border: 0 !important; box-shadow: none !important; padding: 0; min-height: 0 !important; }
+.pk-status { font: 800 14px var(--serif); line-height: 1.25; background: #111; color: #fff; padding: 3px 10px; transform: rotate(-1.5deg); box-shadow: 3px 3px 0 var(--suit-red, #e60012); text-align: center; max-width: 100%; }
+.status.pk-hide { display: none; }
+.pk-pos { position: absolute; transform: translate(-50%, -50%); z-index: 2; }
+.pk-pos .seat { width: calc(2 * var(--mx) - 8px); padding: 5px 7px; gap: 3px; }
+.pk-pos .seat .mini .card { --w: 22px; }
+.pk-pos .seat-info { font-size: 12px; min-height: 16px; }
+.pk-bet, .pk-dbtn, .pk-arrow { position: absolute; transform: translate(-50%, -50%); z-index: 1; }
+.pk-dbtn {
+  width: 24px; height: 24px; border-radius: 50%; background: #fff; border: 2.5px solid #111; box-shadow: 2px 2px 0 #111;
+  font: 900 12px var(--sans, 'Nunito', sans-serif); display: flex; align-items: center; justify-content: center;
+}
+.pk-arrow { color: rgba(0,0,0,.35); font-size: 18px; line-height: 1; pointer-events: none; background: #fff; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; }
+.pk-arrow i { display: block; font-style: normal; }
+.pk-arrow.on { color: #e60012; font-size: 24px; width: 32px; height: 32px; border: 2.5px solid #e60012; animation: arrowPulse 1s ease-in-out infinite; }
+.pk-table.n7, .pk-table.n8, .pk-table.n9 { --mx: 64px; }
+.pk-table + .tl-dir { margin-top: 2px; }
+.pk-table.dense .pk-pos .seat { width: 104px; padding: 2px 5px; gap: 1px; }
+.pk-table.dense .pk-pos .seat .mini .card { --w: 15px; }
+.pk-table.dense .pk-pos .seat-name { font-size: 12px; }
+.pk-table.dense .pk-pos .seat-info { font-size: 11px; min-height: 14px; }
+.pk-table.dense .pk-pos .seat-pts { font-size: 11px; }
+@media (max-height: 760px) {
+  .pk-table { --my: 36px; height: max(230px, calc(100vh - 335px)); }
+  .pk-table + .tl-dir, .pk-table ~ .feed { display: none; }
+  /* lá úp nhỏ trong ghế người khác không cho biết gì thêm: ẩn cho ghế thấp lại (khi so bài thì lá ngửa vẫn hiện) */
+  .pk-pos .seat .mini:not(:has(.card:not(.back))) { display: none; }
+  .pk-pos .seat { padding: 3px 6px; gap: 1px; }
+  .pk-pos .seat .mini .card { --w: 16px; }
+  .pk-mid .pk-center { gap: 8px; }
+  .pk-status { font-size: 13px; }
+}
+@media (max-width: 560px) {
+  .pk-table { --mx: 48px; --my: 40px; height: clamp(320px, calc(100vh - 470px), 540px); }
+  .pk-table.dense { --mx: 44px; }
+  .pk-table.dense .pk-pos .seat { width: 86px; }
+  .pk-pos .seat { padding: 3px 5px; }
+  .pk-pos .seat-name { font-size: 12px; }
+  .pk-pos .seat-pts { font-size: 11px; }
+  .pk-mid .pk-center .board .card { --w: 30px; }
+  .pk-mid .pk-center .board { gap: 3px; }
+  .pk-status { font-size: 12px; }
+}
+
+/* ---------- Chip poker, xin / vay, chủ nợ – con nợ ---------- */
+.chips-n { display: inline-flex; align-items: center; gap: 2px; font-weight: 800; color: #111; white-space: nowrap; }
+.chips-n .ico { width: 15px; height: 15px; vertical-align: -3px; }
+.badge.debtor, .badge.lender { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; padding: 0 4px; border-radius: 2px; font-weight: 800; vertical-align: 1px; }
+.badge.debtor { background: #555; color: #fff; }
+.badge.lender { background: #ffd400; color: #111; border: 1.5px solid #111; }
+.badge.debtor .ico, .badge.lender .ico { width: 12px; height: 12px; }
+.badge.debtor .ico path, .badge.debtor .ico rect { stroke: #fff; }
+.loan-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; }
+.loan-row .btn .ico { width: 18px; height: 18px; vertical-align: -4px; }
+.broke { font-weight: 800; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
+.broke .ico { width: 22px; height: 22px; }
+.loan-p { border-top: 2px dashed rgba(0,0,0,.2); padding: 6px 0; }
+.loan-p:first-of-type { border-top: 0; }
+.loan-p b { margin-right: 4px; }
+.loan-amts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 4px; }
+.loan-amts button { border: 2px solid #111; background: #fff; border-radius: 2px; font-weight: 800; padding: 5px 0; box-shadow: 2px 2px 0 #111; cursor: pointer; }
+.loan-amts button:hover:not(:disabled) { background: #ffd400; }
+.loan-amts button:disabled { opacity: .35; cursor: not-allowed; }
+.taunt-pop { max-height: calc(100vh - 16px); overflow-y: auto; }
+.ask-box {
+  position: fixed; z-index: 80; left: 50%; top: 18%; transform: translateX(-50%) rotate(-1deg); width: min(340px, calc(100vw - 32px));
+  background: #fff; color: #111; border: 4px solid #111; box-shadow: 8px 8px 0 #111; padding: 14px 16px; text-align: center; animation: bubbleIn .18s ease-out;
+}
+.ask-box[hidden] { display: none; }
+.ask-ico .ico { width: 64px; height: 64px; animation: hotPulse 1s ease-in-out infinite; }
+.ask-box p { margin: 6px 0; font-size: 16px; }
+.ask-box small { display: block; color: #555; font-size: 12px; margin-bottom: 8px; }
+.ask-btns { display: flex; gap: 8px; }
+.ask-btns .btn { flex: 1; }
+.tp-sub { margin-top: 8px; padding-top: 6px; border-top: 2px dashed #111; font-weight: 800; font-size: 13px; }
+.tp-sub span { display: block; font-weight: 600; font-size: 11px; color: #555; }
+.tp-grid.orders { grid-template-columns: repeat(3, 1fr); margin-top: 4px; }
+.tp-grid.orders button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px 0 3px; }
+.tp-grid.orders em { font-style: normal; font-size: 11px; font-weight: 800; }
+.tp-forgive { display: block; width: 100%; margin-top: 6px; padding: 5px 0; font-weight: 800; background: #fff; border: 2px dashed #111; border-radius: 2px; cursor: pointer; }
+.order-fx {
+  position: fixed; z-index: 72; pointer-events: none; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center;
+  animation: orderIn 2.8s ease-out forwards;
+}
+.order-fx .o-ico .ico { width: 64px; height: 64px; filter: drop-shadow(3px 3px 0 rgba(0,0,0,.3)); }
+.order-fx b { font: 900 20px var(--serif); background: #ffd400; border: 3px solid #111; padding: 0 10px; box-shadow: 3px 3px 0 #111; transform: rotate(-6deg); white-space: nowrap; }
+.order-fx small { margin-top: 4px; background: #111; color: #fff; font-weight: 800; font-size: 12px; padding: 2px 8px; white-space: nowrap; }
+.o-quat .o-ico { animation: fanSwing .3s ease-in-out infinite alternate; }
+.o-dam .o-ico { animation: punch .18s ease-in-out infinite alternate; }
+.o-hat .o-ico { animation: sing .5s ease-in-out infinite alternate; }
+.o-cui .o-ico, .o-xinloi .o-ico { animation: bow .6s ease-in-out 2 alternate; }
+.o-tra .o-ico { animation: sing .8s ease-in-out infinite alternate; }
+@keyframes orderIn { 0% { opacity: 0; transform: translate(-50%, -80%) scale(.5); } 10% { opacity: 1; transform: translate(-50%, -100%) scale(1.1); } 18%, 85% { transform: translate(-50%, -100%) scale(1); opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -120%); } }
+@keyframes fanSwing { from { transform: rotate(-25deg); } to { transform: rotate(20deg); } }
+@keyframes punch { from { transform: translateX(-6px); } to { transform: translateX(8px) scale(1.1); } }
+@keyframes sing { from { transform: translateY(0) rotate(-6deg); } to { transform: translateY(-6px) rotate(6deg); } }
+@keyframes bow { from { transform: none; } to { transform: translateY(8px) rotate(14deg) scale(.95); } }
+.me .room-inner { position: relative; }
+.raise-bar { position: absolute; left: 0; right: 0; bottom: 58px; z-index: 20; border: 3px solid #111; background: #fff; box-shadow: 4px 4px 0 #111; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.rb-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.rb-presets .btn { flex: 1; min-width: 64px; }
+.rb-presets .btn.on { background: #111; color: #fff; }
+.rb-presets [data-raise-close] { flex: none; min-width: 0; }
+.raise-bar input[type=range] { width: 100%; accent-color: #e60012; height: 28px; }
+.rb-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; color: #555; }
+.rb-row b { font-size: 16px; color: #111; }
+@media (prefers-reduced-motion: reduce) { .order-fx, .order-fx .o-ico, .ask-ico .ico { animation: none !important; } }
+
+.feed.pk-hide { display: none; }
+.pk-dir { position: absolute; left: 4px; bottom: 2px; z-index: 1; font-size: 11px; font-weight: 800; color: #555; background: rgba(255,255,255,.85); padding: 0 6px; border-radius: 2px; }
+.pk-dir b { color: #e60012; font-size: 14px; }
+
+/* ---------- Poker: nhật ký trên bàn, hũ phụ, nút chỉnh số tố ---------- */
+.pk-log { position: absolute; right: 4px; bottom: 2px; z-index: 1; max-width: 46%; text-align: right; font-size: 11px; font-weight: 700; color: #333; pointer-events: none; }
+.pk-log div { background: rgba(255,255,255,.88); padding: 0 6px; margin-top: 1px; display: inline-block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.pk-log div:last-child { color: #111; font-weight: 800; }
+.pk-log div + div { display: block; width: fit-content; margin-left: auto; }
+.pk-pots { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: center; font-size: 12px; font-weight: 700; }
+.pk-pots span { background: #fff; border: 2px solid #111; padding: 0 6px; }
+.rb-step { display: inline-flex; align-items: center; gap: 8px; }
+.rb-step .btn { min-width: 34px; padding: 2px 0; font-size: 18px; line-height: 1; }
+.loan-row .btn.on { background: #111; color: #fff; }
+@media (max-width: 560px) { .pk-log { max-width: 70%; bottom: 18px; } }
+.pk-center { flex-wrap: wrap; }
+.pk-center .pk-pots { flex-basis: 100%; }
