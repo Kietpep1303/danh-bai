@@ -1,5 +1,6 @@
 const { newDeck } = require('./deck');
 const { name, pay, log } = require('./util');
+const Stars = require('./stars');
 
 function classify(cards) {
   if (cards.every(c => c.r >= 11)) return { tier: 1, pts: 10, label: 'Ba tây' };
@@ -20,6 +21,8 @@ module.exports = {
     const deck = newDeck();
     const r = { game: 'baicao', phase: 'play', order, dealer, seats: {} };
     for (const id of order) r.seats[id] = { cards: [deck.pop(), deck.pop(), deck.pop()], flipped: false, result: null };
+    Stars.begin(r);
+    for (const id of order) Stars.deal(room, r, id, r.seats[id].cards);
     log(room, `Ván mới, ${name(room, dealer)} làm cái`);
     return r;
   },
@@ -38,7 +41,11 @@ module.exports = {
         const m = compare(r.seats[id].cards, d);
         r.seats[id].result = m;
         pay(room, m > 0 ? r.dealer : id, m > 0 ? id : r.dealer, Math.abs(m) * room.bet);
+        // sao: bên thắng +1 và cướp số sao bằng hệ số thắng (thường 1, ba tây 2)
+        if (m > 0) { Stars.add(room, r, id, 1); Stars.steal(room, r, id, r.dealer, m, `thắng cái, ${classify(r.seats[id].cards).label}`); }
+        if (m < 0) { Stars.add(room, r, r.dealer, 1); Stars.steal(room, r, r.dealer, id, -m, `cái ăn, ${classify(d).label}`); }
       }
+      Stars.streaks(room, r, r.order, [...r.order.filter(id => r.seats[id].result > 0), ...(r.order.filter(id => r.seats[id].result < 0).length > r.order.filter(id => r.seats[id].result > 0).length ? [r.dealer] : [])]);
       const won = r.order.filter(id => r.seats[id].result < 0).length;
       const lost = r.order.filter(id => r.seats[id].result > 0).length;
       log(room, `Nhà cái ${classify(d).label}: ăn ${won} nhà, đền ${lost} nhà`);
@@ -54,9 +61,9 @@ module.exports = {
     const seats = r.order.map(id => {
       const s = r.seats[id];
       const show = id === me || s.flipped;
-      return { id, count: 3, cards: show ? s.cards : null, info: show ? classify(s.cards).label : null, flipped: s.flipped, result: s.result };
+      return { id, count: 3, cards: show ? s.cards.map(c => Stars.withFx(r, c)) : null, info: show ? classify(s.cards).label : null, flipped: s.flipped, result: s.result };
     });
-    return { game: 'baicao', phase: r.phase, dealer: r.dealer, turn: r.phase === 'done' ? null : r.dealer, seats };
+    return { game: 'baicao', phase: r.phase, dealer: r.dealer, turn: r.phase === 'done' ? null : r.dealer, seats, steals: r.steals || [], starDelta: r.starDelta || {} };
   },
   _test: { classify, compare },
 };

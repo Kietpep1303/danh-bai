@@ -46,8 +46,9 @@ function viewFor(room, pid) {
     code: room.code, me: pid, hostId: room.hostId,
     game: room.game, bet: room.bet, dealerMode: room.dealerMode, dealerId: room.dealerId, dealFx: room.dealFx,
     dealerRounds: room.dealerRounds, myVote: room.votes[pid] || null, tally,
-    players: room.players.map(p => ({ id: p.id, name: p.name, points: p.points, connected: p.connected, chips: p.chips == null ? room.pkStack : p.chips, sitOut: !!p.sitOut })),
+    players: room.players.map(p => ({ id: p.id, name: p.name, points: p.points, connected: p.connected, chips: p.chips == null ? room.pkStack : p.chips, sitOut: p.sitOut || false, left: !!p.left, stars: p.tlStars || 0, streak: p.tlStreak || 0 })),
     pkStack: room.pkStack, debts: room.debts.filter(x => x.amount > 0),
+    next: nextOrder(room), maxSeats: GAMES[room.game].max,
     round: r ? { ...GAMES[r.game].view(room, pid), id: r.id } : null,
     deadline: actor ? room.turnAt + (isOnline(room, actor) ? TURN_MS : OFFLINE_TURN_MS) : null,
     log: room.log.slice(-12), now: Date.now(),
@@ -85,10 +86,28 @@ function chooseDealer(room, order) {
   room.dealerRounds++;
 }
 
+// Ai được chia bài ván tới. Bàn đủ người thì ưu tiên người đã ngồi xem ván trước, người vừa chơi nhường chỗ.
+// Chỗ ngồi vẫn giữ theo thứ tự vào phòng.
+function nextOrder(room) {
+  const G = GAMES[room.game];
+  const ready = room.players.filter(p => p.connected && !p.sitOut && (!G.eligible || G.eligible(room, p)));
+  const prev = room.round ? room.round.order : [];
+  const pick = new Set([...ready].sort((a, b) => prev.includes(a.id) - prev.includes(b.id)).slice(0, G.max).map(p => p.id));
+  return ready.filter(p => pick.has(p.id)).map(p => p.id);
+}
+// Hủy ván đang chơi (chủ phòng đổi trò giữa chừng): poker trả lại chip đã bỏ vào hũ
+function cancelRound(room) {
+  const r = room.round;
+  if (r && r.game === 'poker' && r.phase !== 'done') {
+    for (const id of r.order) { const p = room.players.find(x => x.id === id); if (p) p.chips = r.stack[id] + r.contrib[id]; }
+  }
+  room.round = null;
+}
 function startRound(room) {
   const G = GAMES[room.game];
-  const order = room.players.filter(p => p.connected && !p.sitOut && (!G.eligible || G.eligible(room, p))).slice(0, G.max).map(p => p.id);
+  const order = nextOrder(room);
   if (order.length < G.min) return `Cần ít nhất ${G.min} người đang online`;
+  for (const p of room.players) if (p.sitOut === 'once' && p.connected) p.sitOut = false; // nghỉ đúng ván này, ván sau tự vào lại
   if (G.usesDealer) chooseDealer(room, order);
   room.round = G.start(room, order, room.dealerId);
   room.roundNo = (room.roundNo || 0) + 1;
@@ -139,6 +158,7 @@ io.on('connection', socket => {
         if (!d.name) return reply(cb, { error: 'Phòng này đang mở ở tab khác. Nhập tên để vào như một người chơi khác.', taken: true });
       } else {
         if (d.name) p.name = cleanName(d.name);
+        if (p.left) { p.left = false; log(room, `${p.name} quay lại phòng`); }
         return attach(room, p, cb, d.tab);
       }
     }
@@ -151,9 +171,16 @@ io.on('connection', socket => {
 
   socket.on('settings', (d = {}, cb) => {
     const { room, p } = ctx(); if (!room) return;
+    const playing = room.round && room.round.phase !== 'done';
+    if (d.game && GAMES[d.game] && d.game !== room.game) {
+      if (playing && p.id !== room.hostId) return reply(cb, { error: 'Đang giữa ván: đợi hết ván, hoặc nhờ chủ phòng hủy ván để đổi' });
+      if (playing) cancelRound(room);
+      room.game = d.game; room.round = null;
+      log(room, `${p.name} đổi sang ${GAMES[d.game].title}${playing ? ' (hủy ván đang chơi)' : ''}`);
+      reply(cb, { ok: true }); return broadcast(room);
+    }
     if (p.id !== room.hostId) return reply(cb, { error: 'Chỉ chủ phòng đổi được' });
-    if (room.round && room.round.phase !== 'done') return reply(cb, { error: 'Đợi hết ván rồi đổi' });
-    if (d.game && GAMES[d.game] && d.game !== room.game) { room.game = d.game; room.round = null; log(room, `Đổi sang ${GAMES[d.game].title}`); }
+    if (playing) return reply(cb, { error: 'Đợi hết ván rồi đổi' });
     if (d.bet) room.bet = Math.max(1, Math.min(100000, Math.floor(Number(d.bet)) || 10));
     if (['random', 'fly', 'spin', 'flip', 'arc', 'snap'].includes(d.dealFx)) room.dealFx = d.dealFx;
     if ([500, 1000, 2000, 5000].includes(d.pkStack)) room.pkStack = d.pkStack;
@@ -309,8 +336,8 @@ io.on('connection', socket => {
 
   socket.on('sitout', (d = {}, cb) => {
     const { room, p } = ctx(); if (!room) return;
-    p.sitOut = !!d.on;
-    log(room, `${p.name} ${p.sitOut ? 'nghỉ, không chơi ván sau' : 'vào chơi lại'}`);
+    p.sitOut = d.on === 'once' ? 'once' : !!d.on;
+    log(room, `${p.name} ${p.sitOut === 'once' ? 'nghỉ 1 ván' : p.sitOut ? 'nghỉ, chỉ ngồi xem' : 'vào chơi lại'}`);
     reply(cb, { ok: true }); broadcast(room);
   });
 
@@ -344,7 +371,8 @@ io.on('connection', socket => {
 
   socket.on('leave', () => {
     const { room, p } = ctx(); if (!room) return;
-    p.connected = false; p.socketId = null; p.offAt = Date.now();
+    p.connected = false; p.socketId = null; p.offAt = Date.now(); p.left = true;
+    log(room, `${p.name} rời phòng`);
     socket.leave(room.code); socket.data = {};
     passHost(room); broadcast(room);
   });

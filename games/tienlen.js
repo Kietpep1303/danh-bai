@@ -1,5 +1,6 @@
 const { newDeck } = require('./deck');
 const { name, pay, log } = require('./util');
+const Stars = require('./stars');
 
 // Thứ tự: 3 < 4 < ... < K < A < 2; chất ♠ < ♣ < ♦ < ♥
 const rank = c => (c.r === 1 ? 14 : c.r === 2 ? 15 : c.r);
@@ -52,6 +53,11 @@ function toiTrang(hand) {
   return null;
 }
 const RANK_PTS = { 2: [1, -1], 3: [2, 0, -2], 4: [3, 1, -1, -3] };
+// Sao: nhất +3, nhì +1, ba 0, bét −1 (xem games/stars.js)
+const STAR_PTS = { 2: [3, -1], 3: [3, 0, -1], 4: [3, 1, 0, -1] };
+const addStars = (room, r, id, n) => Stars.add(room, r, id, n);
+const steal = (room, r, thief, victim, n, why) => Stars.steal(room, r, thief, victim, n, why);
+const streaks = (room, r, winner) => Stars.streaks(room, r, r.order, [winner]);
 
 function finish(room, r) {
   const left = r.order.filter(id => r.hands[id].length > 0);
@@ -65,6 +71,10 @@ function finish(room, r) {
   });
   r.phase = 'done'; r.turn = null;
   room.tlWinner = r.ranking[0];
+  const sp = STAR_PTS[r.order.length];
+  r.ranking.forEach((id, i) => addStars(room, r, id, sp[i]));
+  steal(room, r, r.ranking[0], r.ranking[r.ranking.length - 1], 1, 'về nhất');
+  streaks(room, r, r.ranking[0]);
   log(room, `${name(room, r.ranking[0])} về nhất!`);
 }
 function nextWithCards(r, from) {
@@ -94,12 +104,15 @@ function advance(room, r) {
   }
 }
 
+const withFx = Stars.withFx;
 const api = {
   title: 'Tiến lên', min: 2, max: 4, usesDealer: false,
   start(room, order) {
     const deck = newDeck();
     const r = { game: 'tienlen', phase: 'play', order, hands: {}, table: null, passed: [], finished: [], turn: null, require: null, lastPlay: null };
     for (const id of order) r.hands[id] = sortHand(deck.splice(0, 13));
+    Stars.begin(r);
+    for (const id of order) Stars.deal(room, r, id, r.hands[id]);
     log(room, 'Ván tiến lên mới');
     // Tới trắng
     for (const id of order) {
@@ -110,6 +123,9 @@ const api = {
         r.ranking = [id, ...order.filter(o => o !== id)];
         r.toiTrang = { by: id, label: t };
         r.phase = 'done'; room.tlWinner = id;
+        addStars(room, r, id, 3);
+        for (const o of order) if (o !== id) steal(room, r, id, o, 1, 'tới trắng');
+        streaks(room, r, id);
         return r;
       }
     }
@@ -142,13 +158,19 @@ const api = {
     if (!combo) return 'Bộ bài này không hợp lệ';
     if (!canBeat(combo, r.table && r.table.combo)) return 'Bộ này không chặn được bài trên bàn';
     // Chặt heo: người bị chặt đền tiền
-    if (r.table && combo.type !== r.table.combo.type) {
+    const bomb = combo.type === 'quad' || combo.type === 'pairs';
+    if (r.table && (combo.type !== r.table.combo.type || bomb)) {
       const heos = r.table.cards.filter(c => rank(c) === 15);
-      const amt = heos.reduce((s, c) => s + (c.s >= 2 ? 2 : 1), 0) * room.bet;
+      const heoStars = heos.reduce((s, c) => s + (c.s >= 2 ? 2 : 1), 0);
+      const amt = combo.type !== r.table.combo.type ? heoStars * room.bet : 0;
       if (amt) {
         pay(room, r.table.by, pid, amt);
         log(room, `${name(room, pid)} chặt heo ${name(room, r.table.by)}, ăn ${amt}`);
-      } else log(room, `${name(room, pid)} chặt ${combo.label}!`);
+        steal(room, r, pid, r.table.by, heoStars, 'chặt heo');
+      } else {
+        log(room, `${name(room, pid)} chặt ${combo.label}!`);
+        steal(room, r, pid, r.table.by, 1, 'chặt ' + combo.label);
+      }
     }
     r.require = null;
     r.hands[pid] = hand.filter(c => !ids.includes(c.id));
@@ -170,10 +192,11 @@ const api = {
       game: 'tienlen', phase: r.phase, turn: r.turn,
       seats: r.order.map(id => ({
         id, count: r.hands[id].length,
-        cards: id === me || r.phase === 'done' ? r.hands[id] : null,
+        cards: id === me || r.phase === 'done' ? r.hands[id].map(c => withFx(r, c)) : null,
         passed: r.passed.includes(id), place: r.finished.indexOf(id) + 1 || null,
       })),
-      table: r.table ? { by: r.table.by, cards: r.table.cards, label: r.table.combo.label } : null,
+      table: r.table ? { by: r.table.by, cards: r.table.cards.map(c => withFx(r, c)), label: r.table.combo.label } : null,
+      steals: r.steals || [], starDelta: r.starDelta || {},
       require: r.turn === me ? r.require : null,
       ranking: r.ranking || null, toiTrang: r.toiTrang || null,
     };

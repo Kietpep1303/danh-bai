@@ -3,6 +3,7 @@
 // Chip nằm ở player.chips (giữ qua các ván); điểm (player.points) vẫn cộng trừ theo lời lỗ mỗi ván.
 const { newDeck } = require('./deck');
 const { name, log } = require('./util');
+const Stars = require('./stars');
 
 const STREETS = ['preflop', 'flop', 'turn', 'river'];
 const RN = { 14: 'A', 13: 'K', 12: 'Q', 11: 'J', 10: '10' };
@@ -123,6 +124,7 @@ function advance(room, r, fromId) {
   if (next) { r.turn = next; return; }
   // hết vòng cược. Nếu không còn quá 1 người tố được (những người kia tất tay) thì lật hết bài.
   const runOut = live.filter(id => r.stack[id] > 0).length <= 1;
+  if (runOut && r.board.length < 5 && r.runFrom == null) r.runFrom = r.board.length;
   do {
     const i = STREETS.indexOf(r.phase);
     if (i === 3) return finish(room, r, false);
@@ -186,6 +188,14 @@ function finish(room, r, uncontested) {
     log(room, `${name(room, debt.debtor)} thắng ván, tự trả nợ ${name(room, debt.lender)} ${pay} chip${debt.amount ? `, còn nợ ${debt.amount}` : ', hết nợ!'}`);
   }
   if (room.debts) room.debts = room.debts.filter(x => x.amount > 0);
+  // sao quy đổi từ chip lời lỗ: 10 mức mù lớn = 1⭐, có lời ít nhất +1⭐; mỗi ván được/mất tối đa 5⭐ (một hũ lớn không nhảy thẳng lên Kim cương)
+  const unit = room.bet * 5;
+  for (const id of r.order) {
+    const net = r.net[id];
+    const n = net > 0 ? Math.max(1, Math.floor(net / unit)) : net < 0 ? -Math.floor(-net / unit) : 0;
+    Stars.add(room, r, id, Math.max(-3, Math.min(5, n + (r.winners && r.winners.includes(id) ? 1 : 0))));
+  }
+  Stars.streaks(room, r, r.order, r.order.filter(id => r.net[id] > 0));
   r.pot = r.order.reduce((s, id) => s + r.contrib[id], 0);
   r.phase = 'done'; r.turn = null;
   const broke = r.order.filter(id => r.stack[id] <= 0);
@@ -212,6 +222,8 @@ const api = {
       r.stack[id] = chipsOf(room, p); p.chips = r.stack[id];
       r.hands[id] = [deck.pop(), deck.pop()]; r.bets[id] = 0; r.contrib[id] = 0; r.last[id] = null;
     }
+    Stars.begin(r);
+    for (const id of order) Stars.deal(room, r, id, r.hands[id]);
     const sb = n === 2 ? button : (button + 1) % n, bb = (sb + 1) % n;
     r.sb = order[sb]; r.bb = order[bb];
     const SB = Math.max(1, Math.floor(room.bet / 2)), BB = room.bet;
@@ -286,7 +298,7 @@ const api = {
       const sh = r.shown[id];
       return {
         id, count: folded ? 0 : 2, folded,
-        cards: id === me || (done && (sh || r.reveal.includes(id))) ? r.hands[id] : null, shown: done && (!!sh || r.reveal.includes(id)),
+        cards: id === me || (done && (sh || r.reveal.includes(id))) ? r.hands[id].map(c => Stars.withFx(r, c)) : null, shown: done && (!!sh || r.reveal.includes(id)),
         info: sh ? sh.label : id === me && !folded ? currentLabel(r.hands[id], r.board) : null,
         best: sh && r.winners.includes(id) ? sh.five : null,
         bet: r.bets[id], last: r.last[id], chips: r.stack[id], allin: !folded && r.stack[id] === 0,
@@ -304,7 +316,7 @@ const api = {
       toCall, callAllIn: inHand && r.high - myBet >= myStack && myStack > 0,
       minRaiseTo: Math.min(r.high + r.minRaise, myBet + myStack), maxRaiseTo: myBet + myStack,
       canRaise: !done && others && myStack > toCall && !r.noReraise.includes(me),
-      winners: r.winners, winLabel: r.winLabel,
+      winners: r.winners, winLabel: r.winLabel, steals: r.steals || [], starDelta: done ? r.starDelta || {} : {}, runFrom: done && r.runFrom != null ? r.runFrom : null,
       pots: done && r.pots ? r.pots.map(p => ({ amount: p.amount, winners: p.winners })) : null,
       sidePots: done ? null : livePots(r),
     };

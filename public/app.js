@@ -118,8 +118,22 @@
   function emit(ev, data) {
     return new Promise(res => socket.emit(ev, data, r => { if (r && r.error) toast(r.error); res(r || {}); }));
   }
+  // phần trang trí bên trong lá thưởng theo từng kiểu
+  const FX_INNER = {
+    bronze: '<i class="fx-l"></i>', silver: '<i class="fx-l"></i>', gold: '<i class="fx-l"></i>',
+    holo: '<i class="fx-l"></i><i class="fx-sp"></i><i class="fx-sp"></i><i class="fx-sp"></i>', fire: '<i class="fx-l"></i>',
+  };
+  // bậc theo số sao (khớp với server): Đồng 1, Bạc 3, Vàng 6, Kim cương 10
+  const TIER_LIST = [[10, 'holo', 'Kim cương'], [6, 'gold', 'Vàng'], [3, 'silver', 'Bạc'], [1, 'bronze', 'Đồng']];
+  const tierOf = n => { const t = TIER_LIST.find(([m]) => (n || 0) >= m); return t ? { style: t[1], name: t[2], lvl: 4 - TIER_LIST.indexOf(t) } : { style: null, name: 'Chưa có bậc', lvl: 0 }; };
+  const nextTier = n => { const t = [...TIER_LIST].reverse().find(([m]) => (n || 0) < m); return t ? `còn ${t[0] - (n || 0)} ⭐ nữa lên ${t[2]}` : 'bậc cao nhất'; };
+  const tierBadge = p => {
+    if (!p || !p.stars) return '';
+    const t = tierOf(p.stars);
+    return ` <span class="badge tier ${t.style ? 't-' + t.style : 't-none'}" title="${t.name} · ${p.stars} sao · ${nextTier(p.stars)}">${p.streak >= 3 ? '🔥' : '★'}${p.stars}</span>`;
+  };
   const card = (c, cls = '', attr = '') => c
-    ? `<div class="card ${c.s >= 2 ? 'red' : ''} ${cls}" data-id="${c.id}" ${attr}><span class="cr">${RANKS[c.r] || c.r}<i>${SUITS[c.s]}</i></span><span class="cs">${SUITS[c.s]}</span></div>`
+    ? `<div class="card ${c.s >= 2 ? 'red' : ''} ${c.fx ? 'fx fx-' + c.fx : ''} ${cls}" data-id="${c.id}" ${attr}>${c.fx ? FX_INNER[c.fx] || '' : ''}<span class="cr">${RANKS[c.r] || c.r}<i>${SUITS[c.s]}</i></span><span class="cs">${SUITS[c.s]}</span></div>`
     : `<div class="card back ${cls}" ${attr}></div>`;
   // khóa để biết lá nào mới được chia: ván : ghế : thứ tự lá
   const dk = (r, j, id, i) => `data-k="${r.id}:${id}:${i}" data-i="${i}" data-j="${j}"`;
@@ -149,7 +163,7 @@
     trackBeats(S, st);
     S = st; render();
   });
-  socket.on('kicked', () => { store.set({ code: null, token: null }); tabTicket.set({}); S = null; resetChat(); toast('Bạn đã được mời ra khỏi phòng'); render(); });
+  socket.on('kicked', () => { store.set({ code: null, token: null, last: null }); tabTicket.set({}); S = null; resetChat(); toast('Bạn đã được mời ra khỏi phòng'); render(); });
 
   // ---------- Trò chuyện ----------
   // Khung chat nằm ngoài #app để mỗi lần bàn vẽ lại không làm mất chữ đang gõ.
@@ -308,7 +322,8 @@
       <button class="tp-rain" data-rain="${rainItem}">${ico('🌧')} Mưa ${ico(rainItem)} ×24</button>
       <div class="tp-grid emo">${EMOJI.map(it => b(it)).join('')}</div>
       ${ok ? '' : `<small>${ico('💩')} mở khi bạn ăn được hoặc cho người này vay</small>`}
-      ${ordersHTML(id)}`;
+      ${ordersHTML(id)}
+      <button class="tp-forgive tp-mute" data-mute="${id}">${mutedP.has(id) ? '🔊 Nhận lại đồ ném từ ' : '🔇 Chặn đồ ném từ '}${nm}</button>`;
     pop.hidden = false;
     const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
     const x = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2));
@@ -318,7 +333,8 @@
     pop.querySelector('[data-rain]').onclick = e => { e.stopPropagation(); unlockAudio(); rain(id, e.currentTarget.dataset.rain); };
     pop.querySelectorAll('[data-order]').forEach(b => b.onclick = e => { e.stopPropagation(); unlockAudio(); emit('order', { to: id, kind: b.dataset.order }); });
     const fg = pop.querySelector('[data-forgive]');
-    if (fg) fg.onclick = e => { e.stopPropagation(); emit('loan:forgive', { debtor: id }); closeTaunt(); };
+    if (fg) fg.onclick = e => { e.stopPropagation(); closeTaunt(); askForgive(id); };
+    pop.querySelector('[data-mute]').onclick = e => { e.stopPropagation(); closeTaunt(); toggleMute(id); };
   }
   const closeTaunt = () => { pop.hidden = true; popFor = null; stopSpam(); };
   document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-taunt]')) closeTaunt(); });
@@ -351,8 +367,26 @@
   wipe.className = 'wipe-btn'; wipe.hidden = true; wipe.innerHTML = `${ico('🧻')} Lau màn hình`;
   wipe.onclick = () => { mess.querySelectorAll('.mine').forEach(x => x.remove()); syncWipe(); };
   document.body.appendChild(wipe);
-  const pile = {}; // pid -> số món đang dính quanh ghế
-  const syncWipe = () => { wipe.hidden = mess.querySelectorAll('.mine').length < 6; };
+  // Tắt ném đồ (chỉ trên máy mình, người ném không biết): tắt hết, hoặc chặn riêng từng người
+  let tauntOff = !!store.get().tauntOff;
+  const mutedP = new Set(store.get().mutedP || []);
+  const setTauntOff = on => {
+    tauntOff = on; store.set({ tauntOff: on });
+    if (on) { mess.innerHTML = ''; document.querySelectorAll('.throw-fx, .splat-fx').forEach(x => x.remove()); }
+    syncWipe(); if (S) render();
+  };
+  const toggleMute = id => {
+    if (mutedP.has(id)) mutedP.delete(id); else { mutedP.add(id); mess.querySelectorAll('.goo').forEach(x => x.remove()); }
+    store.set({ mutedP: [...mutedP] }); syncWipe();
+    toast(mutedP.has(id) ? `Đã chặn đồ ném từ ${pname(id)}` : `Nhận lại đồ ném từ ${pname(id)}`);
+  };
+  const muteBtn = document.createElement('button');
+  muteBtn.className = 'mute-btn'; muteBtn.hidden = true;
+  muteBtn.innerHTML = '🔇 Tắt ném đồ';
+  muteBtn.onclick = () => { setTauntOff(true); toast('Đã tắt ném đồ. Bật lại trong bảng Phòng'); };
+  document.body.appendChild(muteBtn);
+  const hits = {}; // pid -> số lần bị ném liên tiếp (để chữ BẸP! không hiện dày đặc)
+  const syncWipe = () => { wipe.hidden = mess.querySelectorAll('.mine').length < 6; muteBtn.hidden = wipe.hidden; };
   function stick(item, x, y, size, life, mine, pid) {
     const s = document.createElement('span');
     s.className = 'goo' + (mine ? ' mine' : '');
@@ -360,15 +394,15 @@
     s.style.left = x + 'px'; s.style.top = y + 'px'; s.style.fontSize = size + 'px';
     s.style.setProperty('--r', (Math.random() * 70 - 35) + 'deg');
     s.style.animationDuration = `.18s, ${life}ms`;
+    if (pid) s.dataset.pid = pid;
     mess.appendChild(s);
-    if (pid) pile[pid] = (pile[pid] || 0) + 1;
-    setTimeout(() => { s.remove(); if (pid) pile[pid]--; syncWipe(); }, life);
+    setTimeout(() => { s.remove(); syncWipe(); }, life);
     while (mess.childElementCount > 220) mess.firstElementChild.remove();
     syncWipe();
   }
   let lastHitSfx = 0, lastWhoosh = 0, hitToast = { t: 0, n: 0 };
   socket.on('taunt', ({ from, to, item, name }) => {
-    if (!S) return;
+    if (!S || tauntOff || mutedP.has(from)) return;
     const a = seatRect(from), b = seatRect(to);
     const hard = HARD.has(item);
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -383,14 +417,18 @@
         // dính khắp màn hình mình
         if (hard) stick(item, 20 + Math.random() * (innerWidth - 40), 20 + Math.random() * (innerHeight - 40), 48 + Math.random() * 90, 9000, true);
       }
-      // dính quanh ghế người bị ném, càng nhiều càng lan rộng
-      const n = pile[to] || 0, spread = Math.min(260, 14 + n * 7), ang = Math.random() * Math.PI * 2;
-      const r0 = Math.sqrt(Math.random()) * spread;
-      stick(item, b2.x + Math.cos(ang) * r0 * 1.3, b2.y + Math.sin(ang) * r0 * .8, hard ? 26 + Math.random() * 20 : 24, hard ? 7000 : 2500, false, to);
+      // dính gọn trong ô ghế người bị ném (không lan sang ghế khác hay giữa bàn), mỗi ghế tối đa 12 món
+      const n = hits[to] = (hits[to] || 0) + 1;
+      clearTimeout(hits[to + ':t']); hits[to + ':t'] = setTimeout(() => { hits[to] = 0; }, 1500);
+      const size = hard ? 18 + Math.random() * 8 : 18;
+      const px = Math.max(0, b2.w / 2 - size / 2 - 4), py = Math.max(0, b2.h / 2 - size / 2 - 4);
+      stick(item, b2.x + (Math.random() * 2 - 1) * px, b2.y + (Math.random() * 2 - 1) * py, size, hard ? 4000 : 2000, false, to);
+      const onSeat = [...mess.querySelectorAll(`.goo[data-pid="${to}"]`)];
+      onSeat.slice(0, Math.max(0, onSeat.length - 12)).forEach(x => x.remove());
       const s = document.createElement('div');
       s.className = 'splat-fx' + (hard ? ' hard' : '');
       s.style.left = b2.x + 'px'; s.style.top = b2.y + 'px';
-      s.innerHTML = `<span class="big">${ico(item)}</span>${POW[item] && n % 4 === 0 ? `<b>${POW[item]}</b>` : ''}${hard && n < 12 ? '<i></i><i></i><i></i><i></i><i></i><i></i>' : ''}`;
+      s.innerHTML = `<span class="big">${ico(item)}</span>${POW[item] && (n - 1) % 4 === 0 ? `<b>${POW[item]}</b>` : ''}${hard && n < 12 ? '<i></i><i></i><i></i><i></i><i></i><i></i>' : ''}`;
       document.body.appendChild(s);
       setTimeout(() => s.remove(), 1100);
       const el = seatEl(to);
@@ -440,9 +478,40 @@
     // hết ván: ai còn giữ bài úp (thắng không ai theo, hoặc đã bỏ bài) được lật cho cả bàn xem
     if (seat && r.phase === 'done' && !seat.shown) h += '<button class="btn small ghost" data-showcards>Lật bài cho xem</button>';
     if (mine < (S.pkStack || 1000) / 2) h += `<button class="btn small ghost" data-loan="gift">${ico('🙏')} Xin chip</button><button class="btn small ghost" data-loan="loan">${ico('💰')} Vay chip</button>`;
-    if (mine > 0) h += `<button class="btn small ghost ${me.sitOut ? 'on' : ''}" data-sitout="${me.sitOut ? 0 : 1}">${me.sitOut ? 'Vào chơi lại' : 'Nghỉ ván sau'}</button>`;
     debts.forEach(d => { h += `<button class="btn small" data-repay="${d.lender}" ${mine > 0 ? '' : 'disabled'}>Trả nợ ${pname(d.lender)} (${d.amount})</button>`; });
     return `<div class="loan-row">${h}</div>`;
+  }
+  // Hàng chỗ ngồi: người đang xem bấm vào chơi ván sau; người đang chơi bấm nghỉ ván sau (mọi trò)
+  function seatRow() {
+    const me = S.players.find(p => p.id === S.me); if (!me) return '';
+    const r = S.round, inRound = r && r.phase !== 'done' && r.seats.some(x => x.id === S.me);
+    const justPlayed = r && r.phase === 'done' && r.seats.some(x => x.id === S.me) && !me.sitOut;
+    const next = (S.next || []).includes(S.me), broke = S.game === 'poker' && me.chips <= 0;
+    const btn = (v, t, main) => `<button class="btn small ${main ? '' : 'ghost'}" data-sitout="${v}">${t}</button>`;
+    let msg, btns;
+    if (me.sitOut === 'once') { msg = 'Bạn nghỉ <b>1 ván</b>, ván sau nữa tự vào lại.'; btns = btn(0, 'Thôi, vẫn chơi', true) + btn(1, 'Nghỉ luôn'); }
+    else if (me.sitOut) { msg = 'Bạn đang <b>nghỉ</b>, chỉ ngồi xem.'; btns = btn(0, 'Vào chơi ván sau', true); }
+    else if (inRound || (justPlayed && next && !broke)) return '';
+    else if (broke) { msg = 'Hết chip: xin hoặc vay chip để vào chơi.'; btns = ''; }
+    else if (next) { msg = r && r.phase !== 'done' ? '<b>Đã có chỗ:</b> ván sau bạn sẽ được chia bài.' : '<b>Đã có chỗ</b> ở ván tới.'; btns = btn('once', 'Nghỉ 1 ván') + btn(1, 'Chỉ xem'); }
+    else { msg = `Bàn đủ ${S.maxSeats} người, bạn được ưu tiên vào khi có chỗ.`; btns = btn(1, 'Chỉ xem'); }
+    return `<div class="seat-row ${inRound && !me.sitOut ? '' : 'watching'}">${msg ? `<span>${msg}</span>` : ''}${btns}</div>`;
+  }
+  // đổi trò nhanh giữa các ván (ai cũng đổi được)
+  function gameSwitch() {
+    const r = S.round;
+    if (r && r.phase !== 'done') return '';
+    return `<div class="game-switch"><span>Đổi trò:</span>${Object.entries(GAMES).map(([k, x]) => `<button class="btn small ${S.game === k ? '' : 'ghost'}" data-set-game="${k}" ${S.game === k ? 'disabled' : ''}>${x.name}</button>`).join('')}</div>`;
+  }
+  function debtorRow() {
+    const mine = (S.debts || []).filter(x => x.lender === S.me);
+    if (!mine.length) return '';
+    return `<div class="debtor-row">${mine.map(d => `<div class="dr-item">
+      <span class="dr-who">${ico('⛓')} <b>${pname(d.debtor)}</b> nợ bạn ${d.amount}</span>
+      <span class="dr-btns">${Object.entries(ORDERS).map(([k, o]) => `<button class="dr-b" data-order-to="${d.debtor}" data-order="${k}" title="Bắt ${pname(d.debtor)} ${o.act} bạn">${ico(o.ico)}<em>${o.act.split(' ')[0]}</em></button>`).join('')}
+        <button class="dr-b" data-poop-to="${d.debtor}" title="Ném 💩 vào ${pname(d.debtor)} (giữ để ném liên tục)">${ico('💩')}<em>ném</em></button>
+        <button class="dr-b ghost" data-forgive-to="${d.debtor}" title="Xóa nợ cho ${pname(d.debtor)}">✕<em>xóa nợ</em></button></span>
+    </div>`).join('')}</div>`;
   }
   // bảng chọn người và số chip để xin / vay
   function openLoan(kind, btn) {
@@ -477,7 +546,7 @@
       <div class="ask-btns"><button class="btn ghost" data-ans="0">Không ${gift ? 'cho' : 'cho vay'}</button><button class="btn" data-ans="1">${gift ? 'Cho luôn' : 'Cho vay'}</button></div>`;
     askBox.hidden = false;
     askBox.querySelectorAll('[data-ans]').forEach(b => b.onclick = () => {
-      emit('loan:reply', { id: a.id, ok: b.dataset.ans === '1' }).then(x => { if (x.error && /Đợi hết ván/.test(x.error)) return; askQueue.shift(); showAsk(); });
+      emit('loan:reply', { id: a.id, ok: b.dataset.ans === '1' }).then(x => { if (x.error && /Đợi hết ván/.test(x.error)) return; if (x.ok && b.dataset.ans === '1' && !gift) toast(`Giờ ${a.name} là con nợ của bạn! Sai vặt ở hàng ⛓ dưới bàn`); askQueue.shift(); showAsk(); });
     });
     clearTimeout(showAsk.t);
     showAsk.t = setTimeout(() => { askQueue = askQueue.filter(x => x !== a); showAsk(); }, Math.max(1000, 60000 - (Date.now() - a.got)));
@@ -498,7 +567,7 @@
       <div class="tp-grid orders">${Object.entries(ORDERS).map(([k, o]) => `<button data-order="${k}" title="Bắt ${o.act} bạn">${ico(o.ico)}<em>${o.act.split(' ')[0]}</em></button>`).join('')}</div>
       <button class="tp-forgive" data-forgive>Xóa nợ cho ${pname(id)}</button>` : '';
   socket.on('order', ({ from, to, kind }) => {
-    const o = ORDERS[kind]; if (!o || !S) return;
+    const o = ORDERS[kind]; if (!o || !S || mutedP.has(from)) return;
     const b = seatRect(to);
     const fx = document.createElement('div');
     fx.className = `order-fx o-${kind}`;
@@ -597,7 +666,7 @@
     if (key === lastTableKey) return;
     lastTableKey = key;
     if (first || !key || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const els = [...app.querySelectorAll('.tl-mid .center .cards .card')];
+    const els = [...app.querySelectorAll('.pk-mid .center .cards .card')];
     const from = r.table.by;
     const seat = seatRect(from);
     const chop = newLogs.some(l => /chặt/.test(l.msg));
@@ -617,22 +686,127 @@
     });
     const end = 400 + els.length * 45;
     sfx('slam', end - 60);
-    const mid = app.querySelector('.tl-mid .center');
+    const mid = app.querySelector('.pk-mid .center');
     if (mid) setTimeout(() => {
       mid.animate([{ transform: 'none' }, { transform: chop ? 'translate(-6px,3px) rotate(-1.5deg)' : 'translateY(3px)' },
         { transform: chop ? 'translate(5px,-2px) rotate(1deg)' : 'none' }, { transform: 'none' }], { duration: chop ? 320 : 160 });
     }, end - 60);
-    if (chop) {
-      sfx('chop', end - 60);
-      const m = mid ? mid.getBoundingClientRect() : null;
+    const fx = tlCombo(r.table, newLogs);
+    if (fx) setTimeout(() => comboFx(fx[0], fx[1], centerAt(), fx[2]), end - 80);
+    // lá thưởng được đánh ra: cả bàn thấy, nổ tia sao
+    els.filter(el => el.classList.contains('fx')).forEach((el, k) => setTimeout(() => starBurst(el), end + k * 120));
+  }
+
+  // ---------- Hiệu ứng bộ mạnh (cả 4 trò) ----------
+  // lvl 1: chữ vàng nhỏ, 2: chữ đỏ to + rung, 3: chữ to nhất + tia sáng + chớp màn hình + rung mạnh
+  function centerAt() {
+    const m = app.querySelector('.pk-mid') || app.querySelector('.felt');
+    const b = m ? m.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }
+  function comboFx(text, lvl, at, sub) {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const el = document.createElement('div');
+    el.className = `combo-fx lv${lvl}`;
+    el.innerHTML = `${lvl >= 3 && !reduce ? '<i class="cf-rays"></i>' : ''}<b>${esc(text)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}`;
+    const x = Math.max(120, Math.min(innerWidth - 120, at.x)), y = Math.max(70, Math.min(innerHeight - 70, at.y));
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), lvl >= 3 ? 2300 : 1700);
+    sfx(lvl >= 3 ? 'chop' : lvl === 2 ? 'slam' : 'pop');
+    if (lvl >= 2) sfx('pop', 120);
+    if (reduce) return;
+    const felt = app.querySelector('.felt');
+    if (felt && lvl >= 2) felt.animate([{ transform: 'none' }, { transform: `translate(${lvl >= 3 ? -8 : -4}px, 3px)` }, { transform: `translate(${lvl >= 3 ? 7 : 3}px, -2px)` }, { transform: 'none' }], { duration: lvl >= 3 ? 380 : 220, iterations: lvl >= 3 ? 2 : 1 });
+    if (lvl >= 3) { const f = document.createElement('div'); f.className = 'cf-flash'; document.body.appendChild(f); setTimeout(() => f.remove(), 500); }
+  }
+  // tiến lên: bộ vừa đánh có đáng làm hiệu ứng không -> [chữ, cấp, dòng phụ]
+  function tlCombo(table, logs) {
+    if (!table) return null;
+    const rk = c => (c.r === 1 ? 14 : c.r === 2 ? 15 : c.r);
+    const cards = table.cards, lab = table.label || '', top = Math.max(...cards.map(rk)), heo = top === 15;
+    const chop = logs.find(l => /chặt/.test(l.msg));
+    if (chop) { const m = chop.msg.match(/ăn (\d+)/); return [/chặt heo/.test(chop.msg) ? 'CHẶT HEO!' : 'CHẶT!', 3, m ? `${lab} · ăn ${m[1]}` : lab]; }
+    if (lab === 'Tứ quý') return [heo ? 'TỨ QUÝ HEO!' : 'TỨ QUÝ!', 3, ''];
+    let m = lab.match(/(\d+) đôi thông/);
+    if (m) return [`${m[1]} ĐÔI THÔNG!`, +m[1] >= 4 ? 3 : 2, ''];
+    m = lab.match(/Sảnh (\d+)/);
+    if (m && +m[1] >= 5) return [+m[1] >= 7 ? `SẢNH DÀI ${m[1]} LÁ!` : `SẢNH ${m[1]}!`, +m[1] >= 9 ? 3 : +m[1] >= 6 ? 2 : 1, ''];
+    if (lab === 'Sám cô') return [heo ? 'SÁM HEO!' : 'SÁM CÔ!', heo ? 3 : 1, ''];
+    if (lab === 'Đôi' && heo) return ['ĐÔI HEO!', 2, cards.some(c => c.s >= 2) ? 'có heo đỏ' : ''];
+    if (lab === 'Đôi' && top === 14) return ['ĐÔI ÁT!', 1, ''];
+    if (cards.length === 1 && heo) return [cards[0].s >= 2 ? 'HEO ĐỎ!' : 'HEO!', 1, ''];
+    return null;
+  }
+  function starBurst(el) {
+    const b = el.getBoundingClientRect(), g = document.createElement('div');
+    g.className = 'gold-burst'; g.style.left = (b.left + b.width / 2) + 'px'; g.style.top = (b.top + b.height / 2) + 'px';
+    g.innerHTML = '<i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>';
+    document.body.appendChild(g); sfx('chat'); setTimeout(() => g.remove(), 900);
+  }
+  // sao bay từ ghế người bị cướp sang ghế người cướp
+  function starFly(from, to, n, why) {
+    const a0 = seatRect(from), b0 = seatRect(to);
+    for (let k = 0; k < Math.min(n, 5); k++) {
       const s = document.createElement('div');
-      s.className = 'chop-fx';
-      s.textContent = 'CHẶT!';
-      s.style.left = (m ? m.left + m.width / 2 : innerWidth / 2) + 'px'; s.style.top = (m ? m.top + m.height / 2 : innerHeight / 2) + 'px';
-      s.style.animationDelay = (end - 80) + 'ms';
+      s.className = 'star-fly'; s.textContent = '★';
+      s.style.left = a0.x + 'px'; s.style.top = a0.y + 'px';
       document.body.appendChild(s);
-      setTimeout(() => s.remove(), end + 1100);
+      const dx = b0.x - a0.x, dy = b0.y - a0.y;
+      s.animate([
+        { transform: 'translate(-50%,-50%) scale(.4)', opacity: 0 },
+        { transform: `translate(-50%,-50%) translate(${dx * .5}px,${dy * .5 - 70}px) scale(1.6) rotate(180deg)`, opacity: 1, offset: .5 },
+        { transform: `translate(-50%,-50%) translate(${dx}px,${dy}px) scale(1) rotate(360deg)`, opacity: 1 },
+      ], { duration: 900, delay: k * 140, easing: 'cubic-bezier(.3,.1,.4,1)', fill: 'both' }).onfinish = () => s.remove();
     }
+    setTimeout(() => comboFx(`+${n} ⭐`, 1, b0, `cướp của ${pname(from)} · ${why}`), 700 + Math.min(n, 5) * 140);
+  }
+  // bậc của mọi người: lên bậc thì hiệu ứng lớn, rớt bậc thì hiệu ứng nhỏ
+  const tierSeen = {}; let tierInit = false;
+  function trackTiers() {
+    if (!S) return;
+    for (const p of S.players) {
+      const t = tierOf(p.stars);
+      if (tierInit && tierSeen[p.id] != null && t.lvl !== tierSeen[p.id]) {
+        const at = seatRect(p.id), who = p.id === S.me ? 'Bạn' : p.name;
+        if (t.lvl > tierSeen[p.id]) setTimeout(() => comboFx(`LÊN ${t.name.toUpperCase()}!`, t.lvl >= 4 ? 3 : 2, at, `${who} · ${t.lvl} lá thưởng mỗi ván`), 1600);
+        else setTimeout(() => comboFx('RỚT HẠNG…', 1, at, `${who} xuống ${t.name}`), 1600);
+      }
+      tierSeen[p.id] = t.lvl;
+    }
+    tierInit = true;
+  }
+  // các trò khác: soi trạng thái mới để bắn hiệu ứng (mỗi sự kiện một lần)
+  const fxSeen = new Set(); let fxInit = false;
+  function detectCombos(r) {
+    if (!r) return;
+    const evs = [];
+    const add = (key, text, lvl, at, sub) => evs.push({ key: r.id + ':' + key, text, lvl, at, sub });
+    (r.steals || []).forEach((s, k) => {
+      const key = r.id + ':steal:' + k;
+      if (fxInit && !fxSeen.has(key)) setTimeout(() => starFly(s.from, s.to, s.n, s.why), 400);
+      fxSeen.add(key);
+    });
+    if (r.game === 'tienlen' && r.phase === 'done' && r.toiTrang) add('toitrang', 'TỚI TRẮNG!', 3, centerAt, `${pname(r.toiTrang.by)}: ${r.toiTrang.label}`);
+    if (r.game === 'xidach' || r.game === 'baicao') {
+      const big = r.game === 'xidach' ? { 'Xì bàn': 3, 'Xì dách': 2, 'Ngũ linh': 2 } : { 'Ba tây': 2, '9 nút': 1 };
+      for (const s of r.seats) {
+        if (!s.cards || !s.info) continue;
+        if (r.game === 'baicao' && s.id !== S.me && !s.flipped && r.phase !== 'done') continue;
+        if (big[s.info]) add(s.id + ':' + s.info, s.info.toUpperCase() + '!', big[s.info], () => seatRect(s.id), s.id === S.me ? 'Bạn' : pname(s.id));
+        else if (s.info === 'Quắc' && s.id === S.me) add('quac', 'QUẮC!', 1, () => seatRect(s.id), 'Quá 21 điểm');
+      }
+    }
+    if (r.game === 'poker') {
+      for (const s of r.seats) if (r.phase !== 'done' && s.allin && !s.folded) add('allin:' + s.id, 'TẤT TAY!', 2, () => seatRect(s.id), s.id === S.me ? 'Bạn' : pname(s.id));
+      if (r.phase === 'done' && r.winLabel) {
+        const L = r.winLabel, lvl = /^Thùng phá sảnh|^Tứ quý/.test(L) ? 3 : /^Cù lũ|^Thùng/.test(L) ? 2 : /^Sảnh|^Sám cô/.test(L) ? 1 : 0;
+        const head = [[/^Thùng phá sảnh lớn/, 'THÙNG PHÁ SẢNH LỚN!'], [/^Thùng phá sảnh/, 'THÙNG PHÁ SẢNH!'], [/^Tứ quý/, 'TỨ QUÝ!'], [/^Cù lũ/, 'CÙ LŨ!'], [/^Thùng/, 'THÙNG!'], [/^Sảnh/, 'SẢNH!'], [/^Sám cô/, 'SÁM CÔ!']].find(([re]) => re.test(L));
+        if (lvl && head) add('win', head[1], lvl, centerAt, (r.winners || []).map(id => id === S.me ? 'Bạn' : pname(id)).join(', ') + ' · ' + L);
+      }
+    }
+    if (!fxInit) { evs.forEach(e => fxSeen.add(e.key)); fxInit = true; return; } // mới vào phòng: không bắn lại chuyện cũ
+    evs.filter(e => !fxSeen.has(e.key)).slice(0, 2).forEach((e, k) => { fxSeen.add(e.key); setTimeout(() => comboFx(e.text, e.lvl, e.at(), e.sub), 250 + k * 900); });
   }
 
   const isEmoji = t => /^\p{Extended_Pictographic}{1,3}$/u.test(t);
@@ -655,6 +829,7 @@
         <p class="tag">Xì dách, bài cào, tiến lên, poker. Tạo phòng rồi gửi mã cho bạn bè.</p>
         <label class="field">Tên của bạn<input id="name" maxlength="16" autocomplete="nickname" value="${esc(s.name || '')}" placeholder="Ví dụ: Tuấn"></label>
         <section>
+          ${s.last && s.last.code ? `<button class="btn back-room" id="back">↩ Vào lại phòng <b>${esc(s.last.code)}</b></button><small class="back-note">Điểm và chip của bạn vẫn còn giữ</small>` : ''}
           <h2>Vào phòng có sẵn</h2>
           <div class="join-row">
             <input id="code" class="code-input" maxlength="6" autocapitalize="characters" autocomplete="off" value="${esc(code)}" placeholder="MÃ PHÒNG">
@@ -683,11 +858,17 @@
       const name = getName(); if (!name) return;
       const c = app.querySelector('#code').value.trim().toUpperCase();
       if (c.length !== 6) return toast('Mã phòng có 6 ký tự');
-      const t = ticket();
-      const r = await emit('join', { code: c, name, tab: TAB, token: t.code === c ? t.token : undefined });
+      const t = ticket(), last = store.get().last || {};
+      const r = await emit('join', { code: c, name, tab: TAB, token: t.code === c ? t.token : last.code === c ? last.token : undefined });
       if (r.ok) enterRoom(r);
     };
     app.querySelector('#join').onclick = join;
+    const back = app.querySelector('#back');
+    if (back) back.onclick = async () => {
+      const last = store.get().last;
+      const r = await emit('join', { code: last.code, token: last.token, tab: TAB, name: app.querySelector('#name').value.trim() || undefined });
+      if (r.ok) { store.set({ last: null }); enterRoom(r); } else if (/Không tìm thấy/.test(r.error || '')) { store.set({ last: null }); render(); }
+    };
     app.querySelector('#code').onkeydown = e => { if (e.key === 'Enter') join(); };
   }
   function enterRoom(r) {
@@ -724,7 +905,7 @@
         </div>
         <div>
           <h3>Trò chơi</h3>
-          <div class="seg">${Object.entries(GAMES).map(([k, x]) => `<button ${dis} class="${S.game === k ? 'on' : ''}" data-set-game="${k}">${x.name}</button>`).join('')}</div>
+          <div class="seg">${Object.entries(GAMES).map(([k, x]) => `<button ${playing && !isHost ? 'disabled' : ''} class="${S.game === k ? 'on' : ''}" data-set-game="${k}">${x.name}</button>`).join('')}</div>
         </div>
         <div>
           <h3>${S.game === 'poker' ? 'Mù lớn (mù nhỏ bằng nửa)' : 'Mức cược mỗi ván'}</h3>
@@ -748,6 +929,14 @@
           <p class="note">Cả bàn thấy cùng một kiểu. "Ngẫu nhiên" đổi kiểu mỗi ván.</p>
         </div>
         <div>
+          <h3>Ném đồ, thả emoji vào bạn</h3>
+          <div class="seg">
+            <button class="${tauntOff ? '' : 'on'}" data-taunt-off="0">Hiện</button>
+            <button class="${tauntOff ? 'on' : ''}" data-taunt-off="1">Tắt</button>
+          </div>
+          <p class="note">Chỉ trên máy bạn. ${mutedP.size ? `Đang chặn riêng ${mutedP.size} người (bỏ chặn trong bảng 😈 trên ghế họ).` : 'Muốn chặn riêng một người thì bấm 😈 trên ghế họ.'}</p>
+        </div>
+        <div>
           <h3>Âm thanh</h3>
           <div class="seg">
             <button class="${soundOn ? 'on' : ''}" data-sound="1">Bật tiếng</button>
@@ -759,23 +948,31 @@
   }
   function bindPanel(root) {
     root.querySelectorAll('[data-vote]').forEach(b => b.onclick = () => emit('vote', { id: b.dataset.vote }));
-    root.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => { if (confirm('Mời người này ra khỏi phòng?')) emit('kick', { id: b.dataset.kick }); });
-    root.querySelectorAll('[data-set-game]').forEach(b => b.onclick = () => emit('settings', { game: b.dataset.setGame }));
+    root.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => confirmBox({ title: `Mời ${pname(b.dataset.kick)} ra khỏi phòng?`, yes: 'Mời ra', no: 'Không', lines: ['Người này phải vào lại bằng mã phòng.'], onYes: () => emit('kick', { id: b.dataset.kick }) }));
+    root.querySelectorAll('[data-set-game]').forEach(b => b.onclick = () => {
+      const g = b.dataset.setGame, r = S.round;
+      if (g === S.game) return;
+      if (r && r.phase !== 'done') return confirmBox({ title: `Hủy ván đang chơi để đổi sang ${GAMES[g].name}?`, yes: 'Hủy ván, đổi trò', no: 'Chơi tiếp',
+        lines: [S.game === 'poker' ? 'Chip mọi người đã bỏ vào hũ ván này được trả lại.' : 'Ván đang chơi dừng lại, chưa tính tiền.'], onYes: () => emit('settings', { game: g }) });
+      emit('settings', { game: g });
+    });
     root.querySelectorAll('[data-bet]').forEach(b => b.onclick = () => emit('settings', { bet: +b.dataset.bet }));
     root.querySelectorAll('[data-stack]').forEach(b => b.onclick = () => emit('settings', { pkStack: +b.dataset.stack }));
     root.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => emit('settings', { dealerMode: b.dataset.mode }));
     root.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => emit('settings', { dealFx: b.dataset.fx }));
+    root.querySelectorAll('[data-taunt-off]').forEach(b => b.onclick = () => setTauntOff(b.dataset.tauntOff === '1'));
     root.querySelectorAll('[data-sound]').forEach(b => b.onclick = () => {
       soundOn = b.dataset.sound === '1'; store.set({ sound: soundOn });
       if (soundOn) { unlockAudio(); setTimeout(() => sfx('deal'), 50); }
       render();
     });
     const lv = root.querySelector('[data-leave]');
-    if (lv) lv.onclick = () => {
-      if (!confirm('Rời phòng?')) return;
-      socket.emit('leave'); store.set({ code: null, token: null }); tabTicket.set({}); S = null; sheetOpen = false; resetChat();
+    if (lv) lv.onclick = () => confirmBox({ title: 'Rời phòng?', yes: 'Rời phòng', no: 'Ở lại',
+      lines: [S.game === 'poker' ? 'Chip và điểm của bạn trong phòng này sẽ mất.' : 'Điểm của bạn trong phòng này sẽ mất.'], onYes: leaveRoom });
+    function leaveRoom() {
+      socket.emit('leave'); store.set({ code: null, token: null, last: { code: S.code, token: (tabTicket.get().token || store.get().token) } }); tabTicket.set({}); S = null; sheetOpen = false; resetChat();
       history.replaceState(null, '', '/'); render();
-    };
+    }
   }
 
   // ---------- Ghế ----------
@@ -801,7 +998,7 @@
     const canCheck = r.game === 'xidach' && r.phase === 'dealer' && S.me === r.dealer && !dealer && seat.result == null;
     return `<div class="seat ${isTurn ? 'turn' : ''} ${seat.win ? 'won' : ''} ${seat.folded ? 'folded' : ''} ${p.connected ? '' : 'off'} ${isRinging(seat.id) ? 'ringing' : ''}" data-pid="${seat.id}">
       ${ringFx(seat.id)}${seat.id !== S.me ? tauntBtn(seat.id, esc(p.name)) : ''}
-      <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}${r.game === 'poker' ? pkBadges(seat, true) : ''}${debtBadges(seat.id)}</span><span class="seat-pts">${r.game === 'poker' ? chipTxt(seat.chips) : p.points}</span></div>
+      <div class="seat-top"><span class="seat-name">${esc(p.name)} ${dealer ? '<span class="badge">Cái</span>' : ''}${r.game === 'poker' ? pkBadges(seat, true) : ''}${tierBadge(p)}${debtBadges(seat.id)}</span><span class="seat-pts">${r.game === 'poker' ? chipTxt(seat.chips) : p.points}</span></div>
       ${bubble(seat.id)}
       <div class="mini">${cards}</div>
       <div class="seat-info"><span>${info}</span>${timer}</div>
@@ -809,37 +1006,20 @@
     </div>`;
   }
 
-  // ---------- Bàn tiến lên: ngồi vòng quanh bàn theo thứ tự đánh ----------
-  // Mình luôn ngồi dưới; người đánh ngay sau mình ở bên phải, rồi trên, rồi trái
-  // (ngược chiều kim đồng hồ). Mũi tên giữa các ghế chỉ chiều đánh.
-  const TL_POS = { 1: ['bottom'], 2: ['bottom', 'top'], 3: ['bottom', 'right', 'left'], 4: ['bottom', 'right', 'top', 'left'] };
-  const TL_ARROW = {
-    'bottom>right': ['br', -45], 'right>top': ['tr', -135], 'top>left': ['tl', 135], 'left>bottom': ['bl', 45],
-    'right>left': ['top', 180], 'bottom>top': ['right', -90], 'top>bottom': ['left', 90],
-  };
-  function selfSeat(r, mine) {
+  // ---------- Ghế của mình trên bàn (bài thật nằm bên dưới) ----------
+  function ringSelf(r, mine) {
     const isTurn = r.turn === S.me && r.phase !== 'done';
-    const st = mine.place ? `Về thứ ${mine.place}` : mine.passed ? 'Bỏ lượt' : `${mine.count} lá`;
+    let st = '';
+    if (r.game === 'tienlen') st = mine.place ? `Về thứ ${mine.place}` : mine.passed ? 'Bỏ lượt' : `${mine.count} lá`;
+    else if (mine.result != null && r.dealer !== S.me) st = money(mine.result * S.bet);
+    else if (r.game === 'xidach' && mine.stood) st = 'Đã dằn';
+    else if (r.game === 'baicao' && mine.flipped) st = 'Đã lật';
+    const me = S.players.find(p => p.id === S.me) || { points: 0 };
     return `<div class="seat self ${isTurn ? 'turn' : ''} ${isRinging(S.me) ? 'ringing' : ''}" data-pid="${S.me}">
       ${bubble(S.me, true)}${ringFx(S.me)}
-      <div class="seat-top"><span class="seat-name">Bạn</span><span class="seat-pts">${st}</span></div>
-      ${isTurn && S.deadline ? `<div class="seat-info"><span>Tới lượt bạn</span><span class="timer" data-dl="${S.deadline}"></span></div>` : ''}
+      <div class="seat-top"><span class="seat-name">Bạn${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${tierBadge(me)}${debtBadges(S.me)}</span><span class="seat-pts">${me.points}</span></div>
+      <div class="seat-info"><span>${isTurn ? 'Tới lượt bạn' : st}</span>${isTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span>` : ''}</div>
     </div>`;
-  }
-  function tlTable(r, mine, center) {
-    const n = r.seats.length;
-    const start = mine ? r.seats.indexOf(mine) : 0;
-    const ring = r.seats.map((_, k) => r.seats[(start + k) % n]);
-    const pos = TL_POS[n] || TL_POS[4];
-    let cells = '';
-    ring.forEach((seat, k) => {
-      cells += `<div class="tl-pos" style="grid-area:${pos[k]}">${k === 0 && mine ? selfSeat(r, mine) : seatHTML(seat, r)}</div>`;
-      const a = n > 1 && TL_ARROW[pos[k] + '>' + pos[(k + 1) % n]];
-      const live = r.turn === seat.id && r.phase !== 'done';
-      if (a) cells += `<div class="tl-arrow ${live ? 'on' : ''}" style="grid-area:${a[0]}" aria-hidden="true"><span style="transform:rotate(${a[1]}deg)">➜</span></div>`;
-    });
-    return `<div class="tl-table n${n}">${cells}<div class="tl-mid">${center}</div></div>
-      <p class="tl-dir"><span aria-hidden="true">↺</span> Đánh ngược chiều kim đồng hồ, theo mũi tên</p>`;
   }
 
   // ---------- Bàn chơi ----------
@@ -848,6 +1028,7 @@
   const pkBadges = (s, noD) => (s.btn && !noD ? ' <span class="badge pk-d" title="Nút chia bài">D</span>' : '')
     + (s.sb ? ' <span class="badge pk-b" title="Mù nhỏ">MN</span>' : '') + (s.bb ? ' <span class="badge pk-b" title="Mù lớn">ML</span>' : '');
   function pkSeatInfo(s, r) {
+    if (r.phase === 'showing') return s.folded ? 'Bỏ bài' : '<b class="pk-allin">Tất tay</b>';
     if (r.phase === 'done') return (s.info ? `<b class="pk-hand">${esc(s.info)}</b> ` : s.folded ? 'Bỏ bài ' : '') + (s.net ? money(s.net) : '');
     if (s.folded) return 'Bỏ bài';
     return s.last ? esc(s.last) : '';
@@ -862,7 +1043,7 @@
     const st = r.phase === 'done' ? (mine.net ? money(mine.net) : 'Hòa') : mine.folded ? 'Bỏ bài' : mine.last ? esc(mine.last) : '';
     return `<div class="seat self ${isTurn ? 'turn' : ''} ${mine.win ? 'won' : ''} ${mine.folded ? 'folded' : ''} ${isRinging(S.me) ? 'ringing' : ''}" data-pid="${S.me}">
       ${bubble(S.me, true)}${ringFx(S.me)}
-      <div class="seat-top"><span class="seat-name">Bạn${pkBadges(mine, true)}${debtBadges(S.me)}</span><span class="seat-pts">${chipTxt(mine.chips)}</span></div>
+      <div class="seat-top"><span class="seat-name">Bạn${pkBadges(mine, true)}${tierBadge(S.players.find(p => p.id === S.me))}${debtBadges(S.me)}</span><span class="seat-pts">${chipTxt(mine.chips)}</span></div>
       ${st ? `<div class="seat-info"><span>${st}</span></div>` : ''}
     </div>`;
   }
@@ -879,25 +1060,36 @@
       return 90 + i / 2;
     });
   }
-  function pkTable(r, mine, center) {
-    const n = r.seats.length, angs = pkAngles(n);
-    const start = mine ? r.seats.indexOf(mine) : 0;
-    const ring = r.seats.map((_, k) => r.seats[(start + k) % n]);
+  // Bàn bầu dục dùng chung cho mọi trò. Mình ngồi giữa phía dưới, các ghế xếp theo thứ tự đi.
+  // Poker đi theo chiều kim đồng hồ (như sòng quốc tế); xì dách, bài cào, tiến lên đi ngược chiều kim đồng hồ.
+  const ringDir = r => (r.game === 'poker' ? 1 : -1);
+  function ringOrder(r) {
+    // xì dách: nhà con rút lần lượt, nhà cái rút sau cùng
+    if (r.game === 'xidach' && r.dealer) return [...r.seats.filter(s => s.id !== r.dealer), ...r.seats.filter(s => s.id === r.dealer)];
+    return r.seats;
+  }
+  function ringTable(r, mine, center) {
+    const seats = ringOrder(r), n = seats.length, angs = pkAngles(n), dir = ringDir(r);
+    const M = d => (dir === 1 ? d : 180 - d); // ngược chiều kim đồng hồ: lật gương trái/phải
+    const start = mine ? seats.indexOf(mine) : 0;
+    const ring = seats.map((_, k) => seats[(start + k) % n]);
     const live = r.phase !== 'done';
-    let html = '<div class="pk-oval" aria-hidden="true"></div>';
+    let html = '<div class="pk-oval" aria-hidden="true"></div><svg class="pk-track" aria-hidden="true"><path class="pk-track-base"/><path class="pk-track-run"/></svg>';
     ring.forEach((seat, k) => {
       const deg = angs[k], nextDeg = k + 1 < n ? angs[k + 1] : 450, step = nextDeg - deg;
-      html += `<div class="pk-pos" style="${pkAt(deg)}">${k === 0 && mine ? pkSelf(r, mine) : seatHTML(seat, r)}</div>`;
-      // chip cược đặt trước ghế, nút D đặt lệch bên cạnh
-      if (live && seat.bet) html += `<span class="chip pk-bet" style="${pkAt(deg, .6)}">${seat.bet}</span>`;
-      if (seat.btn) html += `<span class="pk-dbtn" title="Nút chia bài" style="${pkAt(deg - Math.min(22, step / 2.6), .68)}">D</span>`;
+      const self = k === 0 && mine;
+      html += `<div class="pk-pos" style="${pkAt(M(deg))}">${self ? (r.game === 'poker' ? pkSelf(r, mine) : ringSelf(r, mine)) : seatHTML(seat, r)}</div>`;
+      // poker: chip cược đặt trước ghế, nút D đặt lệch bên cạnh
+      if (live && seat.bet) html += `<span class="chip pk-bet" style="${pkAt(M(deg), .6)}">${seat.bet}</span>`;
+      if (seat.btn) html += `<span class="pk-dbtn" title="Nút chia bài" style="${pkAt(M(deg - Math.min(22, step / 2.6)), .68)}">D</span>`;
       // mũi tên giữa ghế này và ghế kế tiếp, chỉ chiều đi
       if (n > 1) {
         const on = live && r.turn === seat.id;
-        html += `<span class="pk-arrow ${on ? 'on' : ''}" data-a="${deg + step / 2}" style="${pkAt(deg + step / 2)}" aria-hidden="true"><i>➜</i></span>`;
+        html += `<span class="pk-arrow ${on ? 'on' : ''}" data-a="${M(deg + step / 2)}" style="${pkAt(M(deg + step / 2))}" aria-hidden="true"><i>➜</i></span>`;
       }
     });
-    return `<div class="pk-table n${n} ${n >= 7 ? 'dense' : ''}" ${pkH ? `style="height:${pkH}px"` : ''}>${html}<div class="pk-mid">${center}<div class="pk-status">${statusText(r, mine)}</div></div><div class="pk-log" aria-live="polite">${S.log.slice(-2).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div><span class="pk-dir" title="Lượt đi theo chiều kim đồng hồ"><b aria-hidden="true">↻</b> chiều kim đồng hồ</span></div>`;
+    const dirTxt = dir === 1 ? '<b aria-hidden="true">↻</b> chiều kim đồng hồ' : '<b aria-hidden="true">↺</b> ngược chiều kim đồng hồ';
+    return `<div class="pk-table g-${r.game} n${n} ${n >= 7 ? 'dense' : ''} ${n >= 10 ? 'crowd' : ''}" data-dir="${dir}" ${pkH ? `style="height:${pkH}px"` : ''}>${html}<div class="pk-mid">${center}${r.phase !== 'done' ? `<div class="pk-status">${statusText(r, mine)}</div>` : ''}</div><div class="pk-log" aria-live="polite">${S.log.slice(-2).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div><span class="pk-dir" title="Chiều đi của lượt">${dirTxt}</span></div>`;
   }
   // xoay mũi tên theo đúng hướng tiếp tuyến của mép bàn (cần kích thước thật của bàn)
   let pkH = 0; // chiều cao bàn vừa khít khung (đo sau khi vẽ)
@@ -916,13 +1108,22 @@
     }
     const cs = getComputedStyle(t);
     const W = t.clientWidth / 2 - parseFloat(cs.getPropertyValue('--mx')), H = t.clientHeight / 2 - parseFloat(cs.getPropertyValue('--my'));
+    const dir = +t.dataset.dir || 1;
+    // vệt chạy dọc mép bàn theo chiều đi: theo chiều kim đồng hồ thì quét dương, ngược lại quét âm
+    const svg = t.querySelector('.pk-track');
+    if (svg) {
+      const tw = t.clientWidth, th = t.clientHeight, cx = tw / 2, cy = th / 2, sw = dir === 1 ? 1 : 0;
+      svg.setAttribute('viewBox', `0 0 ${tw} ${th}`);
+      const d = `M${cx + W} ${cy}A${W} ${H} 0 1 ${sw} ${cx - W} ${cy}A${W} ${H} 0 1 ${sw} ${cx + W} ${cy}`;
+      svg.querySelectorAll('path').forEach(p => p.setAttribute('d', d));
+    }
     // kích thước đổi nhiều thì vẽ lại để chia ghế theo đúng hình bàn
     const changed = !pkDims || Math.abs(pkDims.a - W) > 20 || Math.abs(pkDims.b - H) > 20;
     pkDims = { a: W, b: H };
     if (changed && !orientArrows.busy) { orientArrows.busy = true; render(); orientArrows.busy = false; return; }
     t.querySelectorAll('.pk-arrow').forEach(el => {
       const a = +el.dataset.a * Math.PI / 180;
-      el.firstChild.style.transform = `rotate(${Math.atan2(H * Math.cos(a), -W * Math.sin(a)) * 180 / Math.PI}deg)`;
+      el.firstChild.style.transform = `rotate(${Math.atan2(dir * H * Math.cos(a), -dir * W * Math.sin(a)) * 180 / Math.PI}deg)`;
     });
     // ghế nào lòi ra ngoài bàn (ghế cao, có chuông, có nút 😈 phía trên) thì đẩy vào trong
     const tr = t.getBoundingClientRect();
@@ -949,28 +1150,44 @@
   // Đặt khu giữa bàn (5 lá chung, hũ, trạng thái) vào khoảng trống giữa các ghế, chật thì thu nhỏ lại
   function fitMid(t, tr) {
     const mid = t.querySelector('.pk-mid'); if (!mid) return;
-    mid.style.left = ''; mid.style.top = ''; mid.style.transform = '';
-    const m = mid.getBoundingClientRect();
+    const center = mid.querySelector('.pk-center');
     const seats = [...t.querySelectorAll('.pk-pos')].map(e => e.getBoundingClientRect());
     const cx = tr.left + tr.width / 2, cy = tr.top + tr.height / 2, gap = 6;
-    // khoảng dọc: dưới các ghế phía trên, trên các ghế phía dưới (chỉ tính ghế nằm ngang hàng với khu giữa)
-    let top = tr.top + gap, bottom = tr.bottom - gap;
-    seats.forEach(r => {
-      if (r.right <= m.left || r.left >= m.right) return;
-      if ((r.top + r.bottom) / 2 < cy) top = Math.max(top, r.bottom + gap);
-      else bottom = Math.min(bottom, r.top - gap);
-    });
-    // khoảng ngang: giữa các ghế hai bên nằm trong khoảng dọc đó
-    let left = tr.left + gap, right = tr.right - gap;
-    seats.forEach(r => {
-      if (r.bottom <= top || r.top >= bottom) return;
-      if ((r.left + r.right) / 2 < cx) left = Math.max(left, r.right + gap);
-      else right = Math.min(right, r.left - gap);
-    });
-    const s = Math.max(.5, Math.min(1, (bottom - top) / m.height, (right - left) / m.width));
-    mid.style.left = ((left + right) / 2 - tr.left) + 'px';
-    mid.style.top = ((top + bottom) / 2 - tr.top) + 'px';
-    if (s < 1) mid.style.transform = `translate(-50%, -50%) scale(${s.toFixed(3)})`;
+    // thử một kiểu xếp (ngang hoặc dọc), trả về mức thu nhỏ cần thiết và khoảng trống tìm được
+    const fit = dir => {
+      if (center) center.style.flexDirection = dir;
+      mid.style.left = ''; mid.style.top = ''; mid.style.transform = '';
+      const m0 = mid.getBoundingClientRect(), W = m0.width, H = m0.height;
+      // khoảng trống quanh khu giữa khi nó rộng w (chỉ tính ghế nằm ngang hàng với khu giữa)
+      const space = w => {
+        const L = cx - w / 2, R = cx + w / 2;
+        let top = tr.top + gap, bottom = tr.bottom - gap;
+        seats.forEach(r => {
+          if (r.right <= L || r.left >= R) return;
+          if ((r.top + r.bottom) / 2 < cy) top = Math.max(top, r.bottom + gap); else bottom = Math.min(bottom, r.top - gap);
+        });
+        let left = tr.left + gap, right = tr.right - gap;
+        seats.forEach(r => {
+          if (r.bottom <= top || r.top >= bottom) return;
+          if ((r.left + r.right) / 2 < cx) left = Math.max(left, r.right + gap); else right = Math.min(right, r.left - gap);
+        });
+        return { top, bottom, left, right };
+      };
+      // thu nhỏ dần tới khi vừa
+      let box = null;
+      for (let s = 1; s >= .4; s -= .05) {
+        const b = space(W * s);
+        box = { s, ...b };
+        if (H * s <= b.bottom - b.top && W * s <= b.right - b.left) break;
+      }
+      return box;
+    };
+    const row = fit('row'), col = fit('column');
+    const [dir, b] = row.s >= col.s ? ['row', row] : ['column', col];
+    if (center) center.style.flexDirection = dir;
+    mid.style.left = ((b.left + b.right) / 2 - tr.left) + 'px';
+    mid.style.top = ((b.top + b.bottom) / 2 - tr.top) + 'px';
+    mid.style.transform = b.s < 1 ? `translate(-50%, -50%) scale(${b.s.toFixed(3)})` : '';
   }
   addEventListener('resize', () => orientArrows());
   let raise = { open: false, to: 0, key: null };
@@ -984,26 +1201,72 @@
       <div class="rb-row"><span>${r.minRaiseTo}</span><span class="rb-step"><button class="btn small ghost" data-raise-step="-1" aria-label="Bớt ${S.bet}">−</button><b>Tố lên <span data-raise-val>${raise.to}</span></b><button class="btn small ghost" data-raise-step="1" aria-label="Thêm ${S.bet}">+</button></span><span>${r.maxRaiseTo}</span></div>
     </div>`;
   }
+  // Tất tay: bài mọi người ngửa ra trước, rồi lật 3 lá, lá thứ tư, lá cuối, mỗi lần cách nhau một nhịp
+  const runAnim = {}; // id ván -> lúc bắt đầu lật
+  const RUN_STEP = 1500;
+  function pkRunout(r) {
+    if (!r || r.game !== 'poker' || r.phase !== 'done' || r.runFrom == null || r.runFrom >= 5) return null;
+    if (!(r.id in runAnim)) runAnim[r.id] = firstPaint || matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : Date.now();
+    const steps = [3, 4, 5].filter(x => x > r.runFrom);
+    const k = Math.floor((Date.now() - runAnim[r.id]) / RUN_STEP);
+    if (k >= steps.length) return null;
+    const vis = k > 0 ? steps[k - 1] : r.runFrom;
+    // hẹn vẽ lại ở bước kế tiếp
+    clearTimeout(pkRunout.t);
+    pkRunout.t = setTimeout(() => { sfx('flip'); render(); }, runAnim[r.id] + (k + 1) * RUN_STEP - Date.now() + 20);
+    return {
+      ...r, phase: 'showing', board: r.board.slice(0, vis), winners: null, winLabel: null, pots: null, high: 0, sidePots: null,
+      seats: r.seats.map(s => ({ ...s, win: false, best: null, net: null, info: null, bet: 0, last: s.folded ? 'Bỏ bài' : 'Tất tay' })),
+    };
+  }
   function pkCenter(r) {
     const slots = Array.from({ length: 5 }, (_, i) => r.board[i]
       ? card(r.board[i], r.seats.some(s => s.best && s.best.includes(r.board[i].id)) ? 'hi' : '', `data-k="${r.id}:board:${i}" data-i="${i}" data-j="99"`)
       : '<div class="card slot"></div>').join('');
     return `<div class="center pk-center">
       <div class="cards board">${slots}</div>
-      <div class="pk-pot"><span class="chip big">${r.pot}</span><span>Hũ</span>${r.phase !== 'done' ? `<small>${PK_PHASE[r.phase]}</small>` : ''}</div>
+      <div class="pk-pot"><span class="chip big">${r.pot}</span><span>Hũ</span>${r.phase !== 'done' ? `<small>${r.phase === 'showing' ? 'Đang lật bài chung' : PK_PHASE[r.phase] + (r.high ? ` · mức cược vòng này <b>${r.high}</b>` : ' · chưa ai tố')}</small>` : ''}</div>
       ${r.sidePots && r.sidePots.length > 1 ? `<div class="pk-pots">${r.sidePots.map((v, i) => `<span>${i ? 'Hũ phụ' + (r.sidePots.length > 2 ? ' ' + i : '') : 'Hũ chính'} <b>${v}</b></span>`).join('')}</div>` : ''}
-      ${r.pots && r.pots.length > 1 ? `<div class="pk-pots">${r.pots.map((p, i) => `<span>${i ? 'Hũ phụ' : 'Hũ chính'} <b>${p.amount}</b> → ${p.winners.map(id => id === S.me ? 'Bạn' : pname(id)).join(', ')}</span>`).join('')}</div>` : ''}
     </div>`;
   }
+  // khung kết quả ván (xì dách, bài cào, tiến lên)
+  function roundResult(r, mine, canStart) {
+    let meRes = mine && mine.result != null && r.dealer !== S.me ? `<span class="pr-me">Bạn ${money(mine.result * S.bet)}</span>` : '';
+    if (mine && r.starDelta) {
+      const d = r.starDelta[S.me] || 0, me = S.players.find(p => p.id === S.me) || {};
+      const took = (r.steals || []).filter(s => s.to === S.me).map(s => `cướp ${s.n} của ${pname(s.from)}`);
+      const lost = (r.steals || []).filter(s => s.from === S.me).map(s => `bị ${pname(s.to)} cướp ${s.n}`);
+      meRes += `<span class="pr-me pr-star">⭐ ${d > 0 ? '+' + d : d} → ${me.stars || 0} sao · ${tierOf(me.stars).name}${[...took, ...lost].length ? ' (' + [...took, ...lost].join(', ') + ')' : ''}</span>`;
+    }
+    return `<div class="pk-result" role="status"><b class="pr-main">${ico('🎉')} ${statusText(r, mine)}</b>${meRes}${canStart ? '' : '<small>Đợi chủ phòng hoặc nhà cái chia ván mới</small>'}</div>`;
+  }
+  // khung kết quả ván poker, nằm ngoài bàn để không bị ghế che
+  function pkResult(r, mine) {
+    const who = id => id === S.me ? 'Bạn' : pname(id);
+    const pots = r.pots && r.pots.length > 1
+      ? r.pots.map((p, i) => `<span>${i ? 'Hũ phụ' : 'Hũ chính'} <b>${p.amount}</b> → ${p.winners.map(who).join(', ')}</span>`).join('') : '';
+    const me = mine && mine.net != null ? `<span class="pr-me">Bạn ${mine.net > 0 ? 'được' : mine.net < 0 ? 'mất' : 'hòa'}${mine.net ? ' ' + money(mine.net) : ''}</span>` : '';
+    const d = mine && r.starDelta ? r.starDelta[S.me] || 0 : 0, pme = S.players.find(p => p.id === S.me) || {};
+    const star = mine ? `<span class="pr-me pr-star">⭐ ${d > 0 ? '+' + d : d} → ${pme.stars || 0} sao · ${tierOf(pme.stars).name}</span>` : '';
+    return `<div class="pk-result" role="status"><b class="pr-main">${ico('🎉')} ${pkStatus(r, mine, false)}</b>${pots ? `<div class="pk-pots">${pots}</div>` : ''}${me}${star}</div>`;
+  }
   function pkStatus(r, mine, myTurn) {
+    if (r.phase === 'showing') return 'Tất tay! Đang lật bài…';
     if (r.phase === 'done') {
+      if (r.pots && r.pots.length > 1 && r.winLabel) return `${r.pots[0].winners.map(id => id === S.me ? 'Bạn' : pname(id)).join(', ')} ăn hũ chính với ${esc(r.winLabel)}`;
       const w = (r.winners || []).map(id => id === S.me ? 'Bạn' : pname(id)).join(', ');
       return r.winLabel ? `${w} thắng với ${esc(r.winLabel)}` : `${w} ăn hũ, mọi người bỏ bài`;
     }
-    if (!mine) return 'Bạn đang xem ván này, ván sau sẽ được chia bài';
+    if (!mine) return watchMsg();
     if (mine.folded) return `Bạn đã bỏ bài. Đợi ${pname(r.turn)}`;
     if (myTurn) return r.toCall ? `Tới lượt bạn: theo ${r.toCall}${r.canRaise ? `, tố lên từ ${r.minRaiseTo}` : ""} hoặc bỏ bài` : 'Tới lượt bạn: xem hoặc tố';
     return `Đợi ${pname(r.turn)}`;
+  }
+  function watchMsg() {
+    const me = S.players.find(p => p.id === S.me) || {};
+    if (me.sitOut) return 'Bạn đang nghỉ, ngồi xem';
+    if (S.game === 'poker' && me.chips <= 0) return 'Bạn hết chip, đang ngồi xem';
+    return (S.next || []).includes(S.me) ? 'Bạn đang xem, ván sau sẽ được chia bài' : 'Bạn đang xem, bàn đã đủ người';
   }
   function statusText(r, mine) {
     const myTurn = r.turn === S.me && r.phase !== 'done';
@@ -1013,7 +1276,7 @@
       if (r.ranking) return `${pname(r.ranking[0])} về nhất`;
       return 'Hết ván';
     }
-    if (!mine) return 'Bạn đang xem ván này, ván sau sẽ được chia bài';
+    if (!mine) return watchMsg();
     if (r.game === 'xidach') {
       if (r.phase === 'players') return myTurn ? 'Tới lượt bạn: rút hoặc dằn' : `Đợi ${pname(r.turn)}`;
       return myTurn ? 'Bạn là cái: rút thêm, xét từng người hoặc xét hết' : `Nhà cái ${pname(r.dealer)} đang rút và xét`;
@@ -1030,7 +1293,7 @@
   function watchersHTML(r) {
     const w = S.players.filter(p => !r.seats.some(x => x.id === p.id));
     if (!w.length) return '';
-    return `<div class="watchers"><span>Đang ngồi xem:</span>${w.map(p => `<b class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === S.me ? ' (bạn)' : ''}${S.game === 'poker' && p.chips <= 0 ? ' · hết chip' : ''}</b>`).join('')}<small>${S.game === 'poker' ? 'Ván sau sẽ được chia bài nếu còn chip' : 'Ván sau sẽ được chia bài'}</small></div>`;
+    return `<div class="watchers"><span>Đang ngồi xem:</span>${w.map(p => `<b data-pid="${p.id}" class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === S.me ? ' (bạn)' : ''}${p.sitOut ? ' · nghỉ' : S.game === 'poker' && p.chips <= 0 ? ' · hết chip' : (S.next || []).includes(p.id) ? ' · ván sau vào' : ' · chờ chỗ'}</b>`).join('')}</div>`;
   }
   function renderRoom() {
     const g = GAMES[S.game], r = S.round, isHost = S.me === S.hostId;
@@ -1046,16 +1309,17 @@
         : `<small>Bàn trống</small>`}</div>`;
     }
     if (r && r.game === 'poker') center = pkCenter(r);
+    // xì dách, bài cào: bộ bài giữa bàn (bài chia ra từ đây)
+    if (r && (r.game === 'xidach' || r.game === 'baicao')) center = `<div class="center deck-center"><div class="cards">${card(null)}</div></div>`;
     let body;
     if (!r) {
       body = `<div class="panel-wrap">${panelHTML()}</div>`;
     } else {
       body = `
-        ${r.game === 'tienlen' ? tlTable(r, mine, center) : r.game === 'poker' ? pkTable(r, mine, center)
-          : `<div class="seats ${others.length > 7 ? 'many' : ''}">${others.map(s => seatHTML(s, r)).join('')}</div>`}
+        ${ringTable(r, mine, center)}
         ${watchersHTML(r)}
-        <div class="status ${r.game === 'poker' ? 'pk-hide' : ''}">${statusText(r, mine)}${r.phase === 'done' && !canStart ? '<small>Đợi chủ phòng hoặc nhà cái chia ván mới</small>' : ''}</div>
-        <div class="feed ${r.game === 'poker' ? 'pk-hide' : ''}">${S.log.slice(-3).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div>`;
+        <div class="status pk-hide">${statusText(r, mine)}${r.phase === 'done' && !canStart ? '<small>Đợi chủ phòng hoặc nhà cái chia ván mới</small>' : ''}</div>
+        <div class="feed pk-hide">${S.log.slice(-3).map(l => `<div>${esc(l.msg)}</div>`).join('')}</div>`;
     }
 
     // phần của mình
@@ -1069,8 +1333,8 @@
       let infoTxt = locked ? 'Vuốt lá bài để nặn' : mine.info ? esc(mine.info) : '';
       if (r.game === 'tienlen') infoTxt = (mine.place ? `Về thứ ${mine.place}` : `${mine.count} lá`)
         + (mine.cards && mine.cards.length > 1 ? ` <span class="sort-tools">Xếp <button class="btn small ghost" data-sort="rank">Số</button><button class="btn small ghost" data-sort="suit">Chất</button></span>` : '');
-      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}" ${r.game === 'tienlen' ? '' : `data-pid="${S.me}"`}><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${r.game === 'poker' ? pkBadges(mine) + (mine.bet && r.phase !== 'done' ? ` <span class="chip">${mine.bet}</span>` : '') : ''}${ringFx(S.me)}</span>
-        <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${r.game === 'poker' ? chipTxt(mine.chips) + ' · ' : ''}${me.points} điểm</span></div>`;
+      head = `<div class="me-head ${isRinging(S.me) ? 'ringing' : ''}"><span><b class="${locked ? 'nan-hint' : ''}">${infoTxt}</b>${locked ? '' : resTxt}${r.dealer === S.me ? ' <span class="badge">Cái</span>' : ''}${r.game === 'poker' ? pkBadges(mine) + (mine.bet && r.phase !== 'done' ? ` <span class="chip">${mine.bet}</span>` : '') : ''}${ringFx(S.me)}</span>
+        <span>${locked ? '<button class="btn small ghost" data-quick>Lật nhanh</button> ' : ''}${myTurn && S.deadline ? `<span class="timer" data-dl="${S.deadline}"></span> ` : ''}${me.sitOut ? '' : '<button class="btn small ghost sit-mini" data-sitout="once" title="Nghỉ ván sau, rồi tự vào lại">Nghỉ 1 ván</button><button class="btn small ghost sit-mini" data-sitout="1" title="Nghỉ tới khi bấm vào lại">Nghỉ luôn</button> '}${r.game === 'poker' ? chipTxt(mine.chips) + ' · ' : ''}${me.points} điểm</span></div>`;
       if (r.game === 'tienlen') {
         hand = `<div class="hand tl">${orderedHand(r, mine.cards || []).map((c, i) => card(c, sel.has(c.id) ? 'sel' : '', dk(r, myJ, S.me, i))).join('')}</div>`;
         if (r.phase !== 'done') actions = `
@@ -1087,7 +1351,8 @@
             <button class="btn ghost" data-act="checkAll" ${myTurn && !locked ? '' : 'disabled'}>Xét hết</button>
             <button class="btn" data-act="hit" ${myTurn && !locked ? '' : 'disabled'}>Rút bài</button>`;
         }
-        if (r.game === 'poker' && r.phase !== 'done') {
+        if (r.game === 'poker' && r.phase === 'showing') actions = '<div class="hint" style="flex:1">Tất tay! Đang lật bài chung…</div>';
+        else if (r.game === 'poker' && r.phase !== 'done') {
           if (mine.folded) actions = '<div class="hint" style="flex:1">Bạn đã bỏ bài, đợi hết ván</div>';
           else {
             const dis = myTurn && !locked ? '' : 'disabled';
@@ -1116,7 +1381,7 @@
     else if (!r) actions = `<div class="hint" style="flex:1">Đợi chủ phòng chia bài</div>`;
 
     app.innerHTML = `
-      <div class="room">
+      <div class="room g-${S.game}">
         ${socket.connected ? '' : '<div class="offline-bar">Mất kết nối, đang nối lại…</div>'}
         <header class="bar">
           <button class="code-chip" data-share aria-label="Chia sẻ mã phòng">${S.code}</button>
@@ -1126,9 +1391,9 @@
         </header>
         <section class="felt"><div class="room-inner" style="display:flex;flex-direction:column;gap:12px">${body}</div></section>
         <section class="me"><div class="room-inner" style="display:flex;flex-direction:column;gap:10px">
-          ${head}${hand}
-          ${S.game === 'poker' ? loanRow() : ''}${raiseBar}
-          <div class="actions">${actions}</div>
+          ${r && r.phase === 'done' ? (r.game === 'poker' ? pkResult(r, mine) : roundResult(r, mine, canStart)) : ''}${head}${hand}
+          ${debtorRow()}${S.game === 'poker' ? loanRow() : ''}${seatRow()}${raiseBar}
+          <div class="actions">${gameSwitch()}${actions}</div>
         </div></section>
       </div>
       ${sheetOpen && r ? `<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-label="Phòng">
@@ -1240,6 +1505,13 @@
       el.classList.add('dealing', 'fx-' + fx);
       sfx('deal', delay);
       if (fx === 'flip' && el.dataset.id) sfx('flip', delay + 330);
+      // lá bài vàng: tới tay thì nổ tia sao
+      if (el.classList.contains('fx')) setTimeout(() => {
+        const b = el.getBoundingClientRect(), g = document.createElement('div');
+        g.className = 'gold-burst'; g.style.left = (b.left + b.width / 2) + 'px'; g.style.top = (b.top + b.height / 2) + 'px';
+        g.innerHTML = '<i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>';
+        document.body.appendChild(g); sfx('chat'); setTimeout(() => g.remove(), 900);
+      }, delay + 520);
     });
     deckShow(ox, oy, intro, intro + els.length * step + 200);
   }
@@ -1267,6 +1539,51 @@
     return 760;
   }
 
+  // ---------- Hỏi lại trước các quyết định quan trọng (bấm nhầm là mất tiền, mất ván) ----------
+  const askEl = document.createElement('div');
+  askEl.className = 'ask-box confirm-box'; askEl.hidden = true;
+  askEl.setAttribute('role', 'alertdialog'); askEl.setAttribute('aria-modal', 'true');
+  const askBg = document.createElement('div'); askBg.className = 'confirm-bg'; askBg.hidden = true;
+  document.body.append(askBg, askEl);
+  const closeAsk = () => { askEl.hidden = true; askBg.hidden = true; clearInterval(closeAsk.t); };
+  askBg.onclick = closeAsk;
+  // opts: title, lines (mảng chuỗi HTML), warn, yes, no, onYes, alive (hàm: còn hợp lệ không, ví dụ còn đúng lượt)
+  function confirmBox(o) {
+    askEl.innerHTML = `<p><b>${o.title}</b></p>${o.warn ? `<small class="warn">${o.warn}</small>` : ''}${(o.lines || []).filter(Boolean).map(l => `<small>${l}</small>`).join('')}
+      <div class="ask-btns"><button class="btn ghost" data-ask-no>${o.no || 'Không'}</button><button class="btn ${o.safe ? '' : 'red'}" data-ask-yes>${o.yes}</button></div>`;
+    askEl.setAttribute('aria-label', o.title.replace(/<[^>]+>/g, ''));
+    askEl.hidden = false; askBg.hidden = false;
+    askEl.querySelector('[data-ask-no]').focus();
+    askEl.querySelector('[data-ask-no]').onclick = closeAsk;
+    askEl.querySelector('[data-ask-yes]').onclick = () => { closeAsk(); o.onYes(); };
+    clearInterval(closeAsk.t);
+    if (o.alive) closeAsk.t = setInterval(() => { if (!o.alive()) closeAsk(); }, 300);
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !askEl.hidden) closeAsk(); });
+  // còn đúng lượt của mình ở ván này không (hết lượt thì tự đóng hộp hỏi)
+  const sameTurn = () => { const r = S && S.round, key = r && r.id + ':' + r.turn; return () => { const x = S && S.round; return !!x && x.id + ':' + x.turn === key && x.phase !== 'done'; }; };
+  function askForgive(id) {
+    const d = debtOf(S.me, id); if (!d) return;
+    confirmBox({ title: `Xóa nợ cho ${pname(id)}?`, yes: 'Xóa nợ', no: 'Không', lines: [`Bạn sẽ không đòi lại ${d.amount} chip nữa.`], onYes: () => emit('loan:forgive', { debtor: id }) });
+  }
+  function confirmFold() {
+    const r = S && S.round, mine = r && r.seats.find(x => x.id === S.me);
+    if (!r || !mine) return;
+    confirmBox({
+      title: 'Bỏ bài ván này?', yes: 'Bỏ bài', no: 'Không, chơi tiếp', alive: sameTurn(),
+      warn: r.game === 'poker' && !r.toCall ? 'Bạn đang được <b>Xem</b> miễn phí, không cần bỏ bài.' : '',
+      lines: [r.toCall ? `Đang phải theo <b>${r.toCall}</b> chip để chơi tiếp.` : '', 'Chip đã bỏ vào hũ ván này sẽ mất.'],
+      onYes: () => emit('act', { type: 'fold' }),
+    });
+  }
+  function confirmAllIn(onYes) {
+    const r = S.round, mine = r.seats.find(x => x.id === S.me);
+    confirmBox({
+      title: `Tất tay <b>${r.maxRaiseTo}</b> chip?`, yes: 'Tất tay!', no: 'Thôi', alive: sameTurn(),
+      lines: [`Bạn đặt toàn bộ ${mine.chips} chip còn lại. Thua là hết chip, phải ngồi xem.`], onYes,
+    });
+  }
+
   function bind() {
     bindDrag();
     const q = app.querySelector('[data-quick]'); if (q) q.onclick = quickReveal;
@@ -1274,12 +1591,35 @@
     app.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
       const type = b.dataset.act;
       if (type === 'play') return emit('act', { type, cards: [...sel] }).then(r => { if (r.ok) sel.clear(); render(); });
+      if (type === 'fold') return confirmFold();
+      const r = S.round;
+      if (type === 'call' && r && r.game === 'poker' && r.callAllIn) return confirmBox({
+        title: `Theo tất tay <b>${r.toCall}</b> chip?`, yes: 'Tất tay theo', no: 'Thôi', alive: sameTurn(),
+        lines: ['Số chip này là toàn bộ chip bạn còn. Thua là phải ngồi xem.'], onYes: () => emit('act', { type }),
+      });
+      if (type === 'checkAll') return confirmBox({
+        title: 'Xét hết các nhà?', yes: 'Xét hết', no: 'Chưa', alive: sameTurn(),
+        lines: ['Lật bài tất cả nhà con và tính tiền ngay, không rút thêm được nữa.'], onYes: () => emit('act', { type }),
+      });
+      if (type === 'reveal') return confirmBox({
+        title: 'Lật hết và tính tiền?', yes: 'Lật hết', no: 'Chưa', alive: () => !!(S && S.round && S.round.phase !== 'done'),
+        lines: [`Còn ${r.seats.filter(s => !s.flipped && s.id !== S.me).length} nhà chưa tự lật bài.`], onYes: () => emit('act', { type }),
+      });
       emit('act', { type });
     });
     const sc = app.querySelector('[data-showcards]'); if (sc) sc.onclick = () => emit('act', { type: 'show' });
-    app.querySelectorAll('[data-sitout]').forEach(b => b.onclick = () => emit('sitout', { on: b.dataset.sitout === '1' }));
+    app.querySelectorAll('[data-sitout]').forEach(b => b.onclick = () => emit('sitout', { on: b.dataset.sitout === 'once' ? 'once' : b.dataset.sitout === '1' }));
+    app.querySelectorAll('[data-order-to]').forEach(b => b.onclick = () => { unlockAudio(); emit('order', { to: b.dataset.orderTo, kind: b.dataset.order }); });
+    app.querySelectorAll('[data-poop-to]').forEach(b => holdToSpam(b, b.dataset.poopTo, '💩'));
+    app.querySelectorAll('[data-forgive-to]').forEach(b => b.onclick = () => askForgive(b.dataset.forgiveTo));
     app.querySelectorAll('[data-loan]').forEach(b => b.onclick = e => { e.stopPropagation(); openLoan(b.dataset.loan, b); });
-    app.querySelectorAll('[data-repay]').forEach(b => b.onclick = () => emit('loan:repay', { lender: b.dataset.repay }));
+    app.querySelectorAll('[data-repay]').forEach(b => b.onclick = () => {
+      const d = myDebts().find(x => x.lender === b.dataset.repay); if (!d) return;
+      const pay = Math.min(d.amount, chipsOf(S.me));
+      confirmBox({ title: `Trả nợ ${pname(d.lender)} <b>${pay}</b> chip?`, yes: 'Trả nợ', no: 'Để sau', safe: true,
+        lines: [pay < d.amount ? `Bạn chỉ đủ trả một phần, còn nợ ${d.amount - pay}.` : 'Trả xong là hết nợ, hết bị sai vặt.'],
+        onYes: () => emit('loan:repay', { lender: d.lender }) });
+    });
     const ro = app.querySelector('[data-raise-open]'); if (ro) ro.onclick = () => { raise.open = true; render(); };
     const rc = app.querySelector('[data-raise-close]'); if (rc) rc.onclick = () => { raise.open = false; render(); };
     app.querySelectorAll('[data-raise-step]').forEach(b => b.onclick = () => { const r = S.round; raise.to = Math.max(r.minRaiseTo, Math.min(r.maxRaiseTo, raise.to + +b.dataset.raiseStep * S.bet)); render(); });
@@ -1287,7 +1627,11 @@
     const rr = app.querySelector('[data-raise-range]');
     if (rr) rr.oninput = () => { raise.to = +rr.value; app.querySelectorAll('[data-raise-val]').forEach(x => { x.textContent = rr.value; }); };
     const rg = app.querySelector('[data-raise-go]');
-    if (rg) rg.onclick = () => { const to = raise.to, r = S.round; raise.open = false; emit('act', to >= r.maxRaiseTo ? { type: 'allin' } : { type: 'raise', to }); };
+    if (rg) rg.onclick = () => {
+      const to = raise.to, r = S.round;
+      if (to >= r.maxRaiseTo) return confirmAllIn(() => { raise.open = false; emit('act', { type: 'allin' }); });
+      raise.open = false; emit('act', { type: 'raise', to });
+    };
     app.querySelectorAll('[data-check]').forEach(b => b.onclick = () => emit('act', { type: 'check', target: b.dataset.check }));
     const st = app.querySelector('[data-start]'); if (st) st.onclick = () => emit('start');
     const cl = app.querySelector('[data-clear]'); if (cl) cl.onclick = () => { sel.clear(); render(); };
@@ -1318,12 +1662,18 @@
     const felt = app.querySelector('.felt'), sheet = app.querySelector('.sheet');
     const y = felt ? felt.scrollTop : 0, sy = sheet ? sheet.scrollTop : 0;
     const prevHand = handRects();
-    renderRoom();
+    // tất tay lật hết bài: tạm hiện bản "đang lật" (ít lá chung hơn, chưa công bố thắng thua)
+    const realRound = S.round, shown = pkRunout(realRound);
+    if (shown) S.round = shown;
+    try { renderRoom(); } finally { S.round = realRound; }
+    const shownRound = shown || realRound;
     const f2 = app.querySelector('.felt'), s2 = app.querySelector('.sheet');
     if (f2) f2.scrollTop = y; if (s2) s2.scrollTop = sy;
     animateDeal();
     orientArrows();
     animatePlay(prevHand);
+    detectCombos(shownRound);
+    trackTiers();
     flipHand(prevHand);
     justRevealed = null;
   }

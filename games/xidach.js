@@ -1,5 +1,6 @@
 const { newDeck } = require('./deck');
 const { name, pay, log } = require('./util');
+const Stars = require('./stars');
 
 // Giá trị tốt nhất của bài xì dách. A: 2 lá = 11/10/1, 3 lá = 10/1, 4-5 lá = 1
 function total(cards) {
@@ -37,17 +38,27 @@ function settle(room, r, pid) {
   if (s.result != null) return;
   const m = compare(s.cards, r.seats[r.dealer].cards);
   s.result = m;
-  s.revealed = true;
-  r.seats[r.dealer].revealed = true;
+  s.revealed = true; // bài người bị xét lật ra; bài nhà cái chỉ người này thấy (xem view)
   pay(room, m > 0 ? r.dealer : pid, m > 0 ? pid : r.dealer, Math.abs(m) * room.bet);
   const lbl = classify(s.cards).label;
+  // sao: bên thắng +1 và cướp số sao bằng hệ số thắng (thường 1, xì dách/ngũ linh 2, xì bàn 3)
+  if (m > 0) { Stars.add(room, r, pid, 1); Stars.steal(room, r, pid, r.dealer, m, `thắng cái, ${lbl}`); }
+  if (m < 0) { Stars.add(room, r, r.dealer, 1); Stars.steal(room, r, r.dealer, pid, -m, `cái ăn, ${classify(r.seats[r.dealer].cards).label}`); }
   log(room, m === 0 ? `${name(room, pid)} hòa nhà cái (${lbl})`
     : m > 0 ? `${name(room, pid)} thắng ${m * room.bet} (${lbl})`
       : `${name(room, pid)} thua ${-m * room.bet} (${lbl})`);
 }
 function players(r) { return r.order.filter(id => id !== r.dealer); }
-function checkDone(r) {
-  if (players(r).every(id => r.seats[id].result != null)) { r.phase = 'done'; r.turn = null; }
+function checkDone(r, room) {
+  if (players(r).every(id => r.seats[id].result != null) && r.phase !== 'done') {
+    r.phase = 'done'; r.turn = null;
+    // chuỗi thắng: nhà con thắng cái; cái thắng nếu ăn nhiều nhà hơn thua
+    if (room) {
+      const won = players(r).filter(id => r.seats[id].result > 0);
+      const dealerWin = players(r).filter(id => r.seats[id].result < 0).length > won.length;
+      Stars.streaks(room, r, r.order, dealerWin ? [...won, r.dealer] : won);
+    }
+  }
 }
 function nextPlayer(r) {
   const ps = players(r);
@@ -65,16 +76,18 @@ module.exports = {
     const deck = newDeck();
     const r = { game: 'xidach', phase: 'players', order, dealer, deck, seats: {}, turn: null };
     for (const id of order) r.seats[id] = { cards: [deck.pop(), deck.pop()], stood: false, revealed: false, result: null };
+    Stars.begin(r);
+    for (const id of order) Stars.deal(room, r, id, r.seats[id].cards);
     log(room, `Ván mới, ${name(room, dealer)} làm cái`);
     const dc = classify(r.seats[dealer].cards);
     if (dc.tier >= 4) {
       log(room, `Nhà cái có ${dc.label}!`);
       for (const id of players(r)) settle(room, r, id);
-      checkDone(r);
+      checkDone(r, room);
       return r;
     }
     for (const id of players(r)) if (classify(r.seats[id].cards).tier >= 4) settle(room, r, id);
-    checkDone(r);
+    checkDone(r, room);
     if (r.phase !== 'done') nextPlayer(r);
     return r;
   },
@@ -103,7 +116,7 @@ module.exports = {
       if (s.cards.length >= 5 || c.tier === 0 || c.t >= 21) return 'Không rút thêm được';
       s.cards.push(r.deck.pop());
       const n = classify(s.cards);
-      if (n.tier === 0) { log(room, 'Nhà cái quắc!'); for (const id of players(r)) settle(room, r, id); checkDone(r); }
+      if (n.tier === 0) { log(room, 'Nhà cái quắc!'); for (const id of players(r)) settle(room, r, id); checkDone(r, room); }
       return;
     }
     if (a.type === 'check' || a.type === 'checkAll') {
@@ -112,7 +125,7 @@ module.exports = {
         if (!r.seats[a.target] || a.target === r.dealer) return 'Chọn người để xét';
         settle(room, r, a.target);
       } else for (const id of players(r)) settle(room, r, id);
-      checkDone(r);
+      checkDone(r, room);
       return;
     }
     return 'Thao tác không hợp lệ';
@@ -132,14 +145,18 @@ module.exports = {
     const r = room.round;
     const seats = r.order.map(id => {
       const s = r.seats[id];
-      const show = id === me || s.revealed || r.phase === 'done';
+      // bài nhà cái: chỉ nhà cái, người đã bị xét (đã so bài với cái) và cả bàn khi hết ván mới thấy
+      const mine = r.seats[me];
+      const show = id === r.dealer
+        ? me === r.dealer || r.phase === 'done' || !!(mine && mine.result != null)
+        : id === me || s.revealed || r.phase === 'done';
       return {
-        id, count: s.cards.length, cards: show ? s.cards : null,
+        id, count: s.cards.length, cards: show ? s.cards.map(c => Stars.withFx(r, c)) : null,
         info: show ? classify(s.cards).label : null,
         stood: s.stood, result: s.result,
       };
     });
-    return { game: 'xidach', phase: r.phase, dealer: r.dealer, turn: r.turn, seats };
+    return { game: 'xidach', phase: r.phase, dealer: r.dealer, turn: r.turn, seats, steals: r.steals || [], starDelta: r.starDelta || {} };
   },
   _test: { total, classify, compare },
 };
